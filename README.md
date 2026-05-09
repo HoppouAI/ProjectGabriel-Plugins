@@ -130,9 +130,9 @@ PRs welcome. Rough rules:
    the host's responsibility.
 6. Keep it AGPL-3.0 compatible (matches the host project).
 
-If your plugin needs a private/external service (like the suno one
-does), say so up front in the README. It's fine to ship a plugin that
-only works for some users, just be honest about it.
+If your plugin needs a private or external service, say so up front
+   in the README. It's fine to ship a plugin that only works for some
+   users, just be honest about it.
 
 ---
 
