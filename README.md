@@ -107,22 +107,6 @@ across restarts.
 - File: `data/plugins/mood/state.json`
 - Tool: `setMood`
 
-### [`suno/`](suno/) -- Suno song generation, live streamed
-
-Generates full songs with custom lyrics through Suno and streams them back
-live as they're being made. The AI announces the song, drops the lyrics,
-and the song fills in vocals and instrumentals while the chatbox shows a
-Now Playing bar. While the song streams the AI's voice ducks out and
-unmutes when it stops.
-
-- Disabled by default. Tools are hidden from Gemini until you set
-  `plugins.suno.enabled: true` in `config.yml`.
-- **Backend not included.** Talks to a small private bridge running on
-  `127.0.0.1`. That bridge is not part of this repo and is not being
-  released publicly. If you don't have a compatible bridge, leave it off
-  and the tools wont appear.
-- Requires: `httpx`, `imageio-ffmpeg`
-
 ### [`example_hello/`](example_hello/) -- Reference plugin
 
 Minimal demo. Registers a `sayHello` tool and hooks `startup` / `shutdown`
