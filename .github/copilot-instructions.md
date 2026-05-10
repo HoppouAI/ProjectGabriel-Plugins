@@ -114,6 +114,26 @@ Inside `setup(ctx)` you get a `PluginContext`. Full reference:
 | `ctx.unregister_prompt_contributor(name)` | remove one |
 | `ctx.subscribe(event, callback)` | hook a lifecycle event (sync or async) |
 
+### Runtime messaging
+
+| method | purpose |
+|---|---|
+| `await ctx.send_system_instruction(text)` | push a mid-session system instruction to the model, same path the WebUI uses. wraps as `System instruction update - <text>` and waits for the model to stop speaking before injecting. session must be live. |
+| `await ctx.send_user_text(text)` | inject a user-style text turn into the live session. model responds like any other user message. session must be live. |
+
+Both return `True` on success, `False` if the live session isn't up yet
+or sending failed. Don't call these inside `setup()` (no session yet),
+use them inside a tool handler, an event subscriber, or any time after
+`startup` fires.
+
+```python
+async def on_user_msg(text, source):
+    if "shut up" in text.lower():
+        await ctx.send_system_instruction("Stop talking until further notice.")
+
+ctx.subscribe("message_in", on_user_msg)
+```
+
 ### Reading state
 
 | method / attr | purpose |
