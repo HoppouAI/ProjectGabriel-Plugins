@@ -11,14 +11,33 @@ class DuoChatbox:
     def __init__(self, engine):
         self._engine = engine
 
+    def _ended(self, st: dict) -> bool:
+        dur = float(st.get("duration") or 0.0)
+        pos = float(st.get("position") or 0.0)
+        # if we know the length, hide once we're past it. small 1s grace so
+        # the last second isnt cut off.
+        if dur > 0 and pos > dur + 1.0:
+            return True
+        return False
+
     def is_active(self) -> bool:
         st = self._engine.status()
-        return bool(st.get("playing") or st.get("title"))
+        if not st.get("title"):
+            return False
+        if self._ended(st):
+            # opportunistically tell the engine to forget the track so the
+            # tools / status calls also stop reporting it.
+            try:
+                self._engine.notify_track_ended()
+            except Exception:
+                pass
+            return False
+        return True
 
     def render(self):
         st = self._engine.status()
         title = st.get("title")
-        if not title:
+        if not title or self._ended(st):
             return None
         pos = _fmt_time(st.get("position") or 0.0)
         dur = _fmt_time(st.get("duration") or 0.0)

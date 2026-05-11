@@ -214,6 +214,21 @@ class DuoEngine:
             return {"result": "ok"}
         return await self._client_send_request_stop()
 
+    def notify_track_ended(self):
+        """Called by the chatbox source when it detects playback has passed
+        the song duration. Clears the cached title so status / chatbox stop
+        reporting a stale track. Best effort, no network broadcast, the
+        other side will hit the same end on its own clock."""
+        if self._current_title is None:
+            return
+        self._current_title = None
+        self._current_duration = 0.0
+        try:
+            self.player.stop()
+        except Exception:
+            pass
+        self.on_change()
+
     # ----- host side -----
 
     async def _serve(self):
