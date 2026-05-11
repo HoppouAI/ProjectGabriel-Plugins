@@ -179,3 +179,8 @@ cython_debug/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
+
+# per-plugin local overrides (real files, kept out of git, examples are committed)
+duo_song/config.yml
+mood/moods.json
+mood/emotions.json
