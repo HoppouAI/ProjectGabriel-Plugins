@@ -1,0 +1,46 @@
+# duo_song local config. Copy to config.yml in the same folder and edit.
+# Anything you set here OVERRIDES the same key in the host's main config.yml
+# under plugins.duo_song.*. Anything you leave out falls through.
+
+# 'host' or 'client'. One machine on the LAN runs as host, the other(s)
+# as client. The host plays PT1, clients play PT2.
+role: host
+
+# Which part THIS instance sings: 1 or 2 (you can also write "PT1" / "PT2").
+# Leave blank to default by role (host = 1, client = 2). Set this explicitly
+# if you want a client to sing PT1 and the host to sing PT2 instead, or just
+# to be defensive against typos. Host and client must NOT be set to the same
+# part, the other side will refuse and nack with a 'part mismatch' message.
+local_part: 1
+
+# Friendly label your duo partner sees in logs and status.
+instance_name: gabriel_a
+
+# Host only. Interface to bind the TCP server on. 0.0.0.0 = all NICs.
+bind: 0.0.0.0
+
+# Client only. Where to dial the host. Use the host machine's LAN IP.
+host_address: 192.168.1.50
+
+# TCP port. Must match on both sides.
+port: 8765
+
+# Where the audio files live. Blank = sfx/music/duo (relative to the
+# host's working directory). Files must be named '<title> PT1.<ext>' and
+# '<title> PT2.<ext>'. Separators space, underscore, dash, dot all fine.
+library_dir: ""
+
+# Seconds between the final commit broadcast and the actual start moment.
+# Bigger = more slack on slow LANs, smaller = snappier start. The full
+# prepare/ready handshake takes up to ~1.5s extra on top of this.
+schedule_lead_seconds: 1.2
+
+# 0.0 to 1.0
+volume: 0.6
+
+# How long client waits before retrying after a dropped connection.
+auto_reconnect_seconds: 5
+
+# Lower number = higher priority in the chatbox. The host's own music
+# displays use 10 and 20, so 30 sits just below them.
+chatbox_priority: 30

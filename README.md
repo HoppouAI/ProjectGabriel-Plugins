@@ -107,6 +107,21 @@ across restarts.
 - File: `data/plugins/mood/state.json`
 - Tool: `setMood`
 
+### [`duo_song/`](duo_song/) -- LAN duet, two halves of one song
+
+Lets two Gabriel instances on the same local network sing a duet
+together. Each duet song is a **pair of audio files**, one per singer:
+`SongName PT1.mp3` and `SongName PT2.mp3` dropped into `sfx/music/duo/`
+on both machines. The host plays PT1, the partner plays PT2, both
+trigger at the exact same moment via a small TCP handshake plus a fast
+ping/pong clock sync (typical drift under ~30ms on a quiet LAN).
+
+- Audio: `pygame.mixer` (mp3 / ogg / wav / flac)
+- Library: `sfx/music/duo/`, files named `<title> PT1.<ext>` and
+  `<title> PT2.<ext>` (separators space, underscore, dash, dot all fine)
+- Tools: `startDuoSong`, `stopDuoSong`, `listDuoSongs`, `duoStatus`
+- Requires: `pygame>=2.5`
+
 ### [`example_hello/`](example_hello/) -- Reference plugin
 
 Minimal demo. Registers a `sayHello` tool and hooks `startup` / `shutdown`
