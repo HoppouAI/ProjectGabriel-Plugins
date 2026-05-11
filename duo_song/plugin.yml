@@ -1,0 +1,8 @@
+name: duo_song
+version: 0.1.0
+api_version: 1
+author: HoppouAI
+description: Two Gabriel instances on the same LAN can play songs in sync, one acts as host, the other connects as a client. Shared chatbox shows whats playing on both.
+enabled: false
+requirements:
+  - pygame>=2.5
