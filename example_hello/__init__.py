@@ -72,6 +72,20 @@ class HelloPlugin(Plugin):
         # message_out fires whenever the AI finishes a turn (or gets interrupted)
         ctx.subscribe("message_out", lambda text:
                       ctx.logger.info(f"-> {text[:80]}"))
+
+        # api v2 demo: same tool also available to the discord bot's
+        # separate gemini live session, plus a couple of discord events.
+        # safe to call even when the bot is disabled, the registrations
+        # are kept and just never used.
+        try:
+            ctx.discord.register_tool(HelloTool)
+            ctx.discord.subscribe("bot_ready", lambda client:
+                                  ctx.logger.info(f"discord bot ready as {client.user}"))
+            ctx.discord.subscribe("dm_received", lambda msg:
+                                  ctx.logger.info(f"discord dm from {msg.author}: {msg.content[:60]}"))
+        except Exception as e:
+            ctx.logger.warning(f"example_hello: discord wiring failed: {e}")
+
         ctx.logger.info(f"example plugin ready, loaded from {ctx.plugin_dir}")
 
     def teardown(self, ctx: PluginContext):

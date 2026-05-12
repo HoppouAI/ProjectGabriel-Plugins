@@ -1,6 +1,6 @@
 name: example_hello
-version: 1.0.0
-api_version: 1
+version: 1.1.0
+api_version: 2
 author: HoppouAI
 description: minimal demo plugin that registers a sayHello tool and hooks the startup/shutdown events
 # disabled by default since it's just a reference impl. flip to true to load it.
