@@ -44,3 +44,13 @@ class DuoChatbox:
         if st.get("duration"):
             return f"duo: {title} [{pos}/{dur}]"
         return f"duo: {title} [{pos}]"
+
+    def on_clear(self):
+        # api v2 hook: host calls this when we lose the chatbox to another
+        # source or transition to inactive with nothing taking over. tell
+        # the engine to drop its current track if it hasnt already, so the
+        # tools dont keep reporting a song that ended.
+        try:
+            self._engine.notify_track_ended()
+        except Exception:
+            pass
