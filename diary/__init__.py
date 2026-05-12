@@ -77,6 +77,14 @@ class DiaryPlugin(Plugin):
         )
         DiaryTools._scheduler = scheduler
         ctx.register_tool(DiaryTools)
+        # also expose the diary tools to the Discord bot's gemini session
+        # so it can answer "how was your week" type questions over DMs.
+        # Tool gets a separate instance there but shares the same _store
+        # class attr so reads stay consistent.
+        try:
+            ctx.discord.register_tool(DiaryTools)
+        except Exception as e:
+            ctx.logger.warning(f"diary: discord tool register failed: {e}")
 
         # start the background loop once the host's asyncio loop is up
         def _on_startup():
