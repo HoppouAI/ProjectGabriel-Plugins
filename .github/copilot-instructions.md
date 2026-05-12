@@ -59,7 +59,7 @@ Optional:
 ```yaml
 name: my_thing            # MUST match folder name
 version: 0.1.0            # semver
-api_version: 1            # current host API version
+api_version: 2            # current host API version (2 adds ctx.discord)
 author: YourName
 description: one line description, shows up in logs and docs
 enabled: true             # set to false if it should ship in the off state
@@ -113,6 +113,7 @@ Inside `setup(ctx)` you get a `PluginContext`. Full reference:
 | `ctx.register_prompt_contributor(name, fn)` | inject text into the system prompt every build |
 | `ctx.unregister_prompt_contributor(name)` | remove one |
 | `ctx.subscribe(event, callback)` | hook a lifecycle event (sync or async) |
+| `ctx.discord` | sub-context for the Discord bot's separate gemini live session, see below |
 
 ### Runtime messaging
 
@@ -281,6 +282,103 @@ ctx.register_chatbox_source("my_alert", MyDisplay(mgr), priority=80)
 
 `is_active()` also signals "busy" to the host, suppressing the idle
 banner while it returns True.
+
+### Chatbox source lifecycle (host API v2+)
+
+The host now centralizes chatbox source management in a
+`ChatboxOrchestrator`. The guarantees it gives plugin sources:
+
+- Same text isnt re-sent every tick. The host dedupes and only resends
+  when text changes or after a force-refresh interval (about 6 sec)
+  to keep the chatbox alive.
+- When you flip from `is_active() == True` to `False`, the host stops
+  writing your text immediately and lets the idle banner take over.
+  No stale text lingers.
+- If your `is_active()` or `render()` raises 5 times in a row the
+  host suspends your source for the rest of the run and logs a
+  warning. Other sources keep working.
+- A source returning `None` from `render()` while still active falls
+  through to the next source instead of blanking the chatbox.
+
+Optional new method: `on_clear()`. Fires once when this source loses
+the chatbox to a different winner OR transitions to inactive with
+nothing to take over. Use it for any teardown (closing a UI overlay,
+resetting state). Safe to omit.
+
+```python
+class MyDisplay:
+    def is_active(self): return self.mgr.has_alert
+    def render(self): return self.mgr.alert_text[:140]
+    def on_clear(self):
+        self.mgr.dismiss_alert()  # auto-dismiss when nothing else takes over
+```
+
+## Discord bot integration (`ctx.discord`)
+
+Project Gabriel ships with a Discord selfbot module that runs its own
+separate Gemini Live session. Plugins can extend the bot the same way
+they extend the main VRChat session, via `ctx.discord.*`. The existing
+main-session methods (`ctx.register_tool`, etc) are unchanged and
+still target VRChat only.
+
+Main and Discord registries are independent so a plugin that registers
+on both gets two separate instances. They dont share state unless you
+thread that yourself.
+
+| method | purpose |
+|---|---|
+| `ctx.discord.register_tool(ToolClass)` | attach a tool to the discord bot's tool handler |
+| `ctx.discord.register_prompt_contributor(name, fn)` | inject text into the bot's system prompt every build |
+| `ctx.discord.unregister_prompt_contributor(name)` | remove one |
+| `ctx.discord.subscribe(event, callback)` | hook a Discord-scoped event |
+| `await ctx.discord.send_system_instruction(text)` | inject SYSTEM INSTRUCTION style turn into the bot's session |
+| `await ctx.discord.send_user_text(text)` | inject a user-style text turn |
+| `ctx.discord.session` | the bot's `GeminiTextSession`, or None if offline |
+| `ctx.discord.tool_handler` | the `DiscordToolHandler`, or None if offline |
+
+Discord-scoped events:
+
+| event | args | when |
+|---|---|---|
+| `bot_ready` | `(client)` | the discord client connects |
+| `dm_received` | `(message)` | raw `discord.Message` for a DM / group DM |
+| `mention_received` | `(message)` | raw `discord.Message` for a mention or reply |
+| `message_sent` | `(channel_id: str, text: str)` | the bot replied |
+
+Safe to call all `ctx.discord.*` methods from `setup()` even if the
+bot is disabled in config. Registrations are kept and used if the bot
+later starts. `send_*` returns `False` while the bot is offline.
+
+Discord tools follow the same shape as the bot's built-in tools in
+`discord_bot/tools/`. They get instantiated as `cls(handler)` where
+handler is the `DiscordToolHandler`. Same `cls(handler)` gotcha as
+main-session tools applies, use class attrs to stash deps.
+
+```python
+from src.plugins import Plugin
+
+class DiaryPlugin(Plugin):
+    name = "diary"
+
+    def setup(self, ctx):
+        # Same diary tool works on both sides, two instances
+        ctx.register_tool(DiaryTool)
+        ctx.discord.register_tool(DiaryTool)
+
+        # Same prompt context lands in both prompts
+        ctx.register_prompt_contributor("diary_today", self._today_summary)
+        ctx.discord.register_prompt_contributor("diary_today", self._today_summary)
+
+        # React to incoming Discord DMs
+        self._ctx = ctx
+        ctx.discord.subscribe("dm_received", self._on_dm)
+
+    async def _on_dm(self, message):
+        if "remember this" in message.content.lower():
+            await self._ctx.discord.send_system_instruction(
+                "User just asked you to remember the last DM verbatim."
+            )
+```
 
 ## Per-plugin data
 
