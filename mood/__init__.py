@@ -38,6 +38,17 @@ class MoodPlugin(Plugin):
         MoodTools._store = store
         ctx.register_tool(MoodTools)
         ctx.register_prompt_contributor("mood", lambda: format_for_prompt(store.get()))
+        # mirror everything onto the discord bot's gemini session so dms
+        # see the same mood and the bot can change mood from chat too.
+        # the bot gets its own MoodTools instance, _store is a class attr
+        # so both sides hit the same json file.
+        try:
+            ctx.discord.register_tool(MoodTools)
+            ctx.discord.register_prompt_contributor(
+                "mood", lambda: format_for_prompt(store.get())
+            )
+        except Exception as e:
+            ctx.logger.warning(f"mood: discord registration failed: {e}")
         # keep a handle so other plugins / debug code can poke at it
         self._store = store
         ctx.logger.info(
