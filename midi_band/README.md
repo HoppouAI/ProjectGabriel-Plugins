@@ -81,8 +81,11 @@ plugins:
     library_dir: "sfx/midi"
     schedule_lead_seconds: 1.5
     synth_gain: 0.5
-    audio_driver: ""           # autodetect
+    audio_driver: ""           # autodetect (forced to dsound on Windows)
     chatbox_priority: 25
+    webui_enabled: true        # tiny upload UI on the host
+    webui_bind: 0.0.0.0
+    webui_port: 8767
 ```
 
 **Option B: local `config.yml`** inside the plugin folder

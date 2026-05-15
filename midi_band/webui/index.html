@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>midi_band library</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>midi_band</h1>
+  <span id="hostInfo" class="dim"></span>
+</header>
+
+<main>
+  <section class="upload">
+    <label class="drop" id="drop">
+      <input id="picker" type="file" accept=".mid,.midi" multiple hidden>
+      <span>Drop .mid files here, or click to pick</span>
+    </label>
+    <ul id="uploadStatus" class="upload-status"></ul>
+  </section>
+
+  <section class="library">
+    <div class="lib-head">
+      <h2>Library <span id="count" class="dim"></span></h2>
+      <button id="refresh">refresh</button>
+    </div>
+    <input id="search" type="search" placeholder="filter...">
+    <ul id="songs" class="songs"></ul>
+  </section>
+</main>
+
+<footer class="dim">Project Gabriel &middot; midi_band webui</footer>
+
+<script src="app.js"></script>
+</body>
+</html>

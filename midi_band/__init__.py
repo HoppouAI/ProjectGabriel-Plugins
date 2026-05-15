@@ -32,6 +32,7 @@ from .chatbox import BandChatbox
 from .client import BandClient
 from .player import MidiPlayer
 from .server import BandServer
+from .webui_server import WebUiServer
 
 # Tools depend on Project Gabriel's BaseTool. Skip when the package is
 # imported by the standalone client outside Gabriel.
@@ -127,6 +128,20 @@ class MidiBandPlugin(Plugin):
             ctx.subscribe("shutdown", lambda: server.stop())
             self._server = server
             self._client = None
+
+            webui_enabled = bool(cfg("webui_enabled", True))
+            webui_bind = str(cfg("webui_bind", "0.0.0.0") or "0.0.0.0")
+            webui_port = int(cfg("webui_port", 8767) or 8767)
+            if webui_enabled:
+                webui = WebUiServer(
+                    bind=webui_bind, port=webui_port,
+                    library_dir=library_dir, instance_name=instance_name,
+                )
+                ctx.subscribe("startup", lambda: webui.start())
+                ctx.subscribe("shutdown", lambda: webui.stop())
+                self._webui = webui
+            else:
+                self._webui = None
         else:
             client = BandClient(
                 host=host_address,
@@ -176,6 +191,8 @@ class MidiBandPlugin(Plugin):
                 self._server.stop()
             if getattr(self, "_client", None) is not None:
                 self._client.stop()
+            if getattr(self, "_webui", None) is not None:
+                self._webui.stop()
         except Exception as e:
             ctx.logger.warning(f"midi_band teardown failed: {e}")
 
