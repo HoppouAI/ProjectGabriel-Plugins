@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import re
 import logging
 import signal
 import sys
@@ -129,6 +130,23 @@ def _pick(cli_val, cfg, key, default):
     return default
 
 
+def _set_windows_app_id(name: str) -> None:
+    """Tell windows this process is its own application for per-app audio
+    routing. Without this, every bandmate inherits the launcher's
+    AppUserModelID and the volume mixer lumps them all under one entry,
+    so picking an output device for one applies to all of them.
+    """
+    if not sys.platform.startswith("win"):
+        return
+    try:
+        import ctypes
+        safe = re.sub(r"[^A-Za-z0-9.]+", ".", name).strip(".") or "bandmate"
+        aumid = f"HoppouAI.ProjectGabriel.MidiBand.{safe}"
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(aumid)
+    except Exception:
+        pass
+
+
 def _list_devices_and_exit():
     # try sounddevice first, it gives consistent names across host APIs
     try:
@@ -188,6 +206,11 @@ def main():
 
     setup_logging(str(log_level))
     log = logging.getLogger("midi_band.standalone")
+
+    # set a unique windows app id BEFORE any audio session is opened so
+    # the volume mixer can route this bandmate to its own device.
+    if name:
+        _set_windows_app_id(str(name))
 
     missing = [k for k, v in (("host", host), ("name", name), ("soundfont", soundfont)) if not v]
     if missing:
