@@ -173,25 +173,46 @@ def parse_tracks(file_bytes: bytes) -> dict:
 def expand_track_events(file_bytes: bytes, track_indices: list) -> list:
     """Return [(offset_seconds, mido.Message), ...] sorted by offset, for
     only the tracks in track_indices. Meta messages are dropped, only
-    sounding events make it through."""
+    sounding events make it through.
+
+    Channel setup events (program_change, control_change, pitchwheel)
+    that live in OTHER tracks but target a channel our chosen tracks
+    use also get pulled in. Without this, midis that put all the
+    program_change events in a conductor track end up sounding like
+    piano on every client because they only got the note tracks."""
     import mido
     mid = mido.MidiFile(file=io.BytesIO(file_bytes))
     tpb = mid.ticks_per_beat
     tempo_map = _build_tempo_map(mid)
 
-    keep = {"note_on", "note_off", "control_change", "program_change",
-            "pitchwheel", "aftertouch", "polytouch"}
-    events = []
-    for ti in track_indices:
+    note_kinds = {"note_on", "note_off", "aftertouch", "polytouch"}
+    setup_kinds = {"program_change", "control_change", "pitchwheel"}
+    wanted = set(int(i) for i in track_indices if i is not None)
+
+    # first pass: which channels do our tracks actually play on?
+    used_channels = set()
+    for ti in wanted:
         if ti < 0 or ti >= len(mid.tracks):
             continue
-        track = mid.tracks[ti]
+        for msg in mid.tracks[ti]:
+            if msg.is_meta:
+                continue
+            if msg.type in note_kinds and hasattr(msg, "channel"):
+                used_channels.add(msg.channel)
+
+    events = []
+    for ti, track in enumerate(mid.tracks):
+        is_ours = ti in wanted
         abs_tick = 0
         for msg in track:
             abs_tick += msg.time
             if msg.is_meta:
                 continue
-            if msg.type in keep:
+            t = msg.type
+            if is_ours and (t in note_kinds or t in setup_kinds):
+                events.append((_ticks_to_seconds(abs_tick, tpb, tempo_map), msg))
+            elif (not is_ours) and t in setup_kinds and \
+                    hasattr(msg, "channel") and msg.channel in used_channels:
                 events.append((_ticks_to_seconds(abs_tick, tpb, tempo_map), msg))
     events.sort(key=lambda x: x[0])
     return events
