@@ -34,7 +34,7 @@ class BandChatbox:
 
     def is_active(self) -> bool:
         s = self._status() or {}
-        if s.get("playing"):
+        if s.get("playing") or s.get("paused"):
             return True
         # also stay on briefly when prepare landed but play hasnt fired yet
         return bool(s.get("song"))
@@ -49,7 +49,8 @@ class BandChatbox:
             tracks = [t.get("name") or "?" for t in tracks]
         if not tracks:
             tracks = ["(no tracks assigned)"]
-        lines = [f"midi: {song}", DIVIDER]
+        prefix = "midi (paused): " if s.get("paused") else "midi: "
+        lines = [f"{prefix}{song}", DIVIDER]
         bar = _progress_bar(float(s.get("position") or 0.0),
                             float(s.get("duration") or 0.0))
         if bar:

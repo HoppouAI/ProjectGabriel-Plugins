@@ -487,3 +487,33 @@ class BandServer:
         await self._broadcast(P.encode({"type": P.STOP}))
         self.on_change()
         return {"result": "ok"}
+
+    async def pause_playback(self) -> dict:
+        ok = False
+        try:
+            ok = self.player.pause()
+        except Exception as e:
+            logger.warning(f"midi_band: host pause failed: {e}")
+        await self._broadcast(P.encode({"type": P.PAUSE}))
+        self.on_change()
+        return {"result": "ok" if ok else "noop", "paused_at": self.player.status().get("position")}
+
+    async def resume_playback(self) -> dict:
+        start_at = _now() + self.lead
+        await self._broadcast(P.encode({
+            "type": P.RESUME,
+            "start_at_server_t": start_at,
+        }))
+        try:
+            self.player.resume(start_at)
+        except Exception as e:
+            logger.warning(f"midi_band: host resume failed: {e}")
+        self.on_change()
+        return {"result": "ok", "starts_in_seconds": round(self.lead, 2)}
+
+    async def set_volume(self, level: float) -> dict:
+        # level is 0.0 (silent) to 2.0 (loud-ish), 0.5 is the default
+        applied = self.player.set_gain(level)
+        await self._broadcast(P.encode({"type": P.VOLUME, "gain": applied}))
+        self.on_change()
+        return {"result": "ok", "gain": applied}

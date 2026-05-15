@@ -119,6 +119,46 @@ class BandTools(BaseTool):
                 parameters={"type": "OBJECT", "properties": {}},
             ),
             types.FunctionDeclaration(
+                name="pauseMidiBand",
+                description=(
+                    "Pause the current song for you and every bandmate. The song freezes where "
+                    "it is and you can resume from the same spot later with resumeMidiBand.\n"
+                    "**Invocation Condition:** Call when the user asks to pause, hold, or take a "
+                    "break. Don't call if nothing is playing."
+                ),
+                parameters={"type": "OBJECT", "properties": {}},
+            ),
+            types.FunctionDeclaration(
+                name="resumeMidiBand",
+                description=(
+                    "Resume a paused song so you and every bandmate pick up from where you "
+                    "stopped, all at the same moment.\n"
+                    "**Invocation Condition:** Call when the user wants to continue a paused song. "
+                    "Don't call if no song is paused, or if a song is already playing."
+                ),
+                parameters={"type": "OBJECT", "properties": {}},
+            ),
+            types.FunctionDeclaration(
+                name="setBandVolume",
+                description=(
+                    "Set how loud you and every bandmate play. 0.0 is silent, 0.5 is the normal "
+                    "default, 1.0 is loud, 2.0 is as loud as it gets. Takes effect immediately "
+                    "even mid-song.\n"
+                    "**Invocation Condition:** Call when the user asks the band to be quieter, "
+                    "louder, softer, or to mute. Pick a value that matches the request."
+                ),
+                parameters={
+                    "type": "OBJECT",
+                    "properties": {
+                        "level": {
+                            "type": "NUMBER",
+                            "description": "Volume from 0.0 (silent) to 2.0 (loudest). 0.5 is normal.",
+                        },
+                    },
+                    "required": ["level"],
+                },
+            ),
+            types.FunctionDeclaration(
                 name="bandSoundcheck",
                 description=(
                     "Quick sync check: every bandmate plays a short percussive tick on alternating "
@@ -206,6 +246,17 @@ class BandTools(BaseTool):
             return await srv.start_playback()
         if name == "stopMidiBand":
             return await srv.stop_playback()
+        if name == "pauseMidiBand":
+            return await srv.pause_playback()
+        if name == "resumeMidiBand":
+            return await srv.resume_playback()
+        if name == "setBandVolume":
+            try:
+                lvl = float(args.get("level"))
+            except Exception:
+                return {"result": "error", "message": "level must be a number 0.0 to 2.0"}
+            lvl = max(0.0, min(2.0, lvl))
+            return await srv.set_volume(lvl)
         if name == "bandSoundcheck":
             try:
                 dur = float(args.get("duration_seconds") or 10.0)
@@ -233,5 +284,7 @@ def _host_status(srv) -> dict:
         "host_tracks": info.get("host_tracks"),
         "assignments": info.get("assignments"),
         "playing": ps.get("playing"),
+        "paused": ps.get("paused"),
         "position": ps.get("position"),
+        "gain": ps.get("gain"),
     }

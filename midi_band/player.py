@@ -52,6 +52,12 @@ class MidiPlayer:
         self._scheduled_start: float = 0.0
         self._duration: float = 0.0
         self._native_primed = False
+        # for pause/resume: keep last scheduled events around so we can
+        # replay from a given offset.
+        self._last_events: list = []
+        self._last_song_orig_duration: float = 0.0
+        self._paused_offset: float = 0.0
+        self._is_paused: bool = False
 
     def _default_driver(self) -> Optional[str]:
         # fluidsynth's auto driver is unreliable on Windows: it tries
@@ -167,6 +173,10 @@ class MidiPlayer:
             self._current_tracks = list(track_names)
             self._scheduled_start = float(start_at_local)
             self._duration = float(duration)
+            self._last_events = list(events)
+            self._last_song_orig_duration = float(duration)
+            self._is_paused = False
+            self._paused_offset = 0.0
             self._thread = threading.Thread(
                 target=self._run,
                 args=(events, start_at_local, self._stop_flag),
@@ -278,6 +288,87 @@ class MidiPlayer:
             self._current_song = None
             self._current_tracks = []
             self._duration = 0.0
+            self._last_events = []
+            self._is_paused = False
+            self._paused_offset = 0.0
+
+    def pause(self) -> bool:
+        # freeze playback, remember how far we got, kill the thread so no
+        # more notes fire. resume() picks back up from saved offset.
+        with self._lock:
+            if not (self._thread and self._thread.is_alive()):
+                return False
+            elapsed = max(0.0, time.monotonic() - self._scheduled_start)
+            sf = self._stop_flag
+            t = self._thread
+            song = self._current_song
+            tracks = list(self._current_tracks)
+            events = list(self._last_events)
+            orig_dur = self._last_song_orig_duration
+        if sf is not None:
+            sf.set()
+        if t is not None and t.is_alive():
+            try:
+                t.join(timeout=0.3)
+            except Exception:
+                pass
+        try:
+            self._all_notes_off()
+        except Exception:
+            pass
+        with self._lock:
+            self._is_paused = True
+            self._paused_offset = elapsed
+            # keep song/tracks/events so resume() can use them
+            self._current_song = song
+            self._current_tracks = tracks
+            self._last_events = events
+            self._last_song_orig_duration = orig_dur
+        return True
+
+    def resume(self, start_at_local: float) -> bool:
+        with self._lock:
+            if not self._is_paused or not self._last_events:
+                return False
+            offset = self._paused_offset
+            song = self._current_song or ""
+            tracks = list(self._current_tracks)
+            orig_dur = self._last_song_orig_duration
+            # filter out events already played
+            remaining = [(o, m) for (o, m) in self._last_events if o >= offset]
+        if not remaining:
+            self.stop_playback()
+            return False
+        # set scheduled_start such that an event at offset=paused_offset
+        # fires exactly at start_at_local. _run does target = start + offset.
+        effective_start = float(start_at_local) - offset
+        new_duration = max(0.0, orig_dur - offset)
+        with self._lock:
+            self._stop_flag = threading.Event()
+            self._scheduled_start = effective_start
+            self._duration = new_duration + offset  # so position math stays sensible
+            self._is_paused = False
+            self._thread = threading.Thread(
+                target=self._run,
+                args=(remaining, effective_start, self._stop_flag),
+                daemon=True,
+            )
+            self._thread.start()
+        logger.info(f"midi_band: resumed '{song}' from {offset:.2f}s")
+        return True
+
+    def set_gain(self, gain: float) -> float:
+        g = max(0.0, min(2.0, float(gain)))
+        self.gain = g
+        with self._lock:
+            fs = self._fs
+        if fs is not None:
+            try:
+                # pyfluidsynth exposes settings via .setting
+                fs.setting("synth.gain", g)
+            except Exception as e:
+                logger.debug(f"midi_band: setting synth.gain failed: {e}")
+        return g
 
     def is_playing(self) -> bool:
         t = self._thread
@@ -286,14 +377,18 @@ class MidiPlayer:
     def status(self) -> dict:
         playing = self.is_playing()
         pos = 0.0
-        if playing or self._current_song:
+        if self._is_paused:
+            pos = self._paused_offset
+        elif playing or self._current_song:
             pos = max(0.0, time.monotonic() - self._scheduled_start)
         return {
             "playing": playing,
+            "paused": self._is_paused,
             "song": self._current_song,
             "tracks": list(self._current_tracks),
             "position": pos,
             "duration": self._duration,
+            "gain": self.gain,
         }
 
     def shutdown(self):

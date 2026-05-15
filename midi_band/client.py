@@ -204,6 +204,29 @@ class BandClient:
             self.player.stop_playback()
             self.on_change()
             return
+        if kind == P.PAUSE:
+            try:
+                self.player.pause()
+            except Exception as e:
+                logger.warning(f"midi_band: client pause failed: {e}")
+            self.on_change()
+            return
+        if kind == P.RESUME:
+            start_at_server = float(msg.get("start_at_server_t") or 0.0)
+            local_start = start_at_server - self._server_offset
+            try:
+                self.player.resume(local_start)
+            except Exception as e:
+                logger.warning(f"midi_band: client resume failed: {e}")
+            self.on_change()
+            return
+        if kind == P.VOLUME:
+            try:
+                self.player.set_gain(float(msg.get("gain") or 0.5))
+            except Exception:
+                pass
+            self.on_change()
+            return
         if kind == P.SOUNDCHECK:
             await self._handle_soundcheck(msg)
             return
