@@ -422,6 +422,13 @@ class LauncherApp(ctk.CTk):
                 font=("Segoe UI", 10),
             ).pack(anchor="w", padx=14, pady=(0, 10))
 
+        # autosave shared header on edit
+        for var in (self.host_var, self.port_var, self.driver_var, self.sf_var):
+            try:
+                var.trace_add("write", lambda *_: self._schedule_save())
+            except Exception:
+                pass
+
     def _build_table(self, bandmates: List[dict]):
         wrap = ctk.CTkFrame(self, fg_color="transparent")
         wrap.pack(fill="both", expand=True, padx=14, pady=4)
@@ -481,6 +488,13 @@ class LauncherApp(ctk.CTk):
         card = BandmateCard(self, self.scroller, data, self.devices)
         card.pack(fill="x", padx=4, pady=6)
         self.cards.append(card)
+        # save whenever fields on the card change so device/name/sf/gain
+        # are always persisted, no need to remember to hit Save.
+        for var in (card.name_var, card.device_var, card.sf_var, card.gain_var):
+            try:
+                var.trace_add("write", lambda *_: self._schedule_save())
+            except Exception:
+                pass
 
     def add_card(self):
         self._add_card_data({
@@ -489,12 +503,24 @@ class LauncherApp(ctk.CTk):
             "soundfont": "",
             "gain": 0.5,
         })
+        self._schedule_save()
 
     def remove_card(self, card: BandmateCard):
         if card in self.cards:
             self.cards.remove(card)
+        self._schedule_save()
+
+    def _schedule_save(self):
+        # debounce so a slider drag doesn't write the file 40 times.
+        if getattr(self, "_save_after_id", None):
+            try:
+                self.after_cancel(self._save_after_id)
+            except Exception:
+                pass
+        self._save_after_id = self.after(800, self.save)
 
     def save(self):
+        self._save_after_id = None
         data = {"shared": self.shared_settings(), "bandmates": [c.to_dict() for c in self.cards]}
         save_roster(data)
         log.info(f"saved roster ({len(self.cards)} bandmates) -> {ROSTER_PATH}")
