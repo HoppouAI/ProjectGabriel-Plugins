@@ -23,6 +23,11 @@ dependencies = [
     "colorama>=0.4",
 ]
 
+[project.optional-dependencies]
+gui = [
+    "sounddevice>=0.4",
+]
+
 [project.scripts]
 midi-band-standalone = "standalone_client:main"
 

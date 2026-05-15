@@ -98,6 +98,31 @@ Each running instance is one bandmate. To have several you need
 each one's audio to land on its own input so VRChat instances pick up
 different players.
 
+### The easy way: launcher GUI
+
+Run the included tkinter launcher to manage all your bandmates from
+one window:
+
+```powershell
+uv run launcher_gui.py
+```
+
+It lets you add as many bandmate rows as you want, each with its own
+name, output device dropdown, soundfont and gain. Start/stop them
+individually or all at once. The roster persists to `bandmates.yml`.
+
+For the device dropdown to be populated with real device names, also
+install the `gui` extra:
+
+```powershell
+uv pip install -e ".[gui]"
+```
+
+(without it the device field becomes a free-text entry, which still
+works, you just have to type the device name yourself.)
+
+### The manual way
+
 1. Install [VB-CABLE](https://vb-audio.com/Cable/) (free). For more
    than one extra cable get the A+B and C+D bundles too, or use
    Voicemeeter Banana / Potato.
