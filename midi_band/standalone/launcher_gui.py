@@ -1,32 +1,34 @@
-"""midi_band standalone launcher GUI.
+"""midi_band standalone launcher GUI (CustomTkinter dark mode).
 
-Spawn and manage multiple standalone_client.py instances from a single
-window. Each row is one bandmate, with its own name, audio output
-device, soundfont and gain. Start/stop them independently. The whole
-roster persists to bandmates.yml next to this file.
+Spawn and manage multiple standalone_client.py instances from one
+nice dark-themed window. Each row is one bandmate with its own audio
+output device, soundfont and gain. Roster persists to bandmates.yml.
 
 Run:
     uv run launcher_gui.py
 or:
     python launcher_gui.py
 
-Requires only stdlib (tkinter ships with Python on Windows). If the
-'sounddevice' package is installed it gets used for a real device
-dropdown, otherwise the device field is free text and you type the
-name yourself.
+Requires customtkinter (always) and optionally sounddevice for a real
+output-device dropdown:
+    pip install customtkinter sounddevice pyyaml
 """
 from __future__ import annotations
 
 import logging
-import os
 import signal
 import subprocess
 import sys
 import threading
-import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
-from typing import Dict, List, Optional
+from tkinter import filedialog, messagebox
+from typing import List, Optional
+
+try:
+    import customtkinter as ctk
+except Exception:
+    print("customtkinter is required: pip install customtkinter", file=sys.stderr)
+    raise
 
 try:
     import yaml
@@ -47,16 +49,28 @@ DEFAULT_DRIVER = "dsound" if sys.platform.startswith("win") else ""
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("launcher")
 
+ctk.set_appearance_mode("dark")
+ctk.set_default_color_theme("dark-blue")
+
+# palette pulled from dark-blue theme so everything matches
+COL_BG = "#1a1a1a"
+COL_CARD = "#242424"
+COL_CARD_HI = "#2c2c2c"
+COL_ACCENT = "#1f6aa5"
+COL_GREEN = "#2fa84f"
+COL_GREEN_HI = "#3bc861"
+COL_RED = "#a83c2f"
+COL_RED_HI = "#c64c3b"
+COL_YELLOW = "#c98b1c"
+COL_TEXT_DIM = "#888888"
+
 
 def list_output_devices() -> List[str]:
-    """Best-effort enumeration of system audio output device names. Returns
-    [] if sounddevice isn't installed; the GUI then falls back to a
-    plain text entry."""
     if _sd is None:
         return []
     try:
         devs = _sd.query_devices()
-        out = []
+        out: List[str] = []
         for d in devs:
             if d.get("max_output_channels", 0) > 0:
                 name = d.get("name") or ""
@@ -86,7 +100,7 @@ def load_roster() -> dict:
 
 def save_roster(data: dict):
     if yaml is None:
-        messagebox.showerror("missing dep", "PyYAML is not installed, can't save roster. pip install pyyaml")
+        messagebox.showerror("missing dep", "PyYAML not installed: pip install pyyaml")
         return
     try:
         with open(ROSTER_PATH, "w", encoding="utf-8") as f:
@@ -95,56 +109,94 @@ def save_roster(data: dict):
         messagebox.showerror("save failed", f"could not write {ROSTER_PATH}: {e}")
 
 
-class BandmateRow:
-    """One row in the launcher table representing a single client process."""
+class BandmateCard(ctk.CTkFrame):
+    """One bandmate as a horizontal card."""
 
-    def __init__(self, app: "LauncherApp", parent: tk.Widget, idx: int, data: dict, devices: List[str]):
+    def __init__(self, app: "LauncherApp", parent, data: dict, devices: List[str]):
+        super().__init__(parent, fg_color=COL_CARD, corner_radius=10)
         self.app = app
-        self.idx = idx
         self.devices = devices
         self.proc: Optional[subprocess.Popen] = None
-        self._monitor_thread: Optional[threading.Thread] = None
 
-        self.frame = ttk.Frame(parent, padding=(6, 4))
-        self.frame.grid(row=idx + 1, column=0, sticky="ew", pady=2)
-        for col in range(7):
-            self.frame.columnconfigure(col, weight=1 if col in (0, 1, 2) else 0)
+        self.grid_columnconfigure(1, weight=1)
 
-        # Name
-        self.name_var = tk.StringVar(value=str(data.get("name") or f"bandmate_{idx + 1}"))
-        ttk.Entry(self.frame, textvariable=self.name_var, width=14).grid(row=0, column=0, padx=2, sticky="ew")
+        # -- status dot + name (column 0)
+        left = ctk.CTkFrame(self, fg_color="transparent")
+        left.grid(row=0, column=0, padx=(14, 8), pady=12, sticky="nsw")
 
-        # Audio device: combobox if we enumerated, else plain entry
-        self.device_var = tk.StringVar(value=str(data.get("device") or ""))
+        self.dot = ctk.CTkLabel(left, text="\u25cf", font=("Segoe UI", 18), text_color=COL_TEXT_DIM)
+        self.dot.pack(side="left", padx=(0, 8))
+
+        self.name_var = ctk.StringVar(value=str(data.get("name") or "bandmate"))
+        ctk.CTkEntry(
+            left, textvariable=self.name_var, width=140, height=32,
+            font=("Segoe UI", 13, "bold"),
+        ).pack(side="left")
+
+        # -- device + soundfont + gain (column 1, expanded)
+        mid = ctk.CTkFrame(self, fg_color="transparent")
+        mid.grid(row=0, column=1, padx=8, pady=12, sticky="ew")
+        mid.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(mid, text="Output", width=60, anchor="w", text_color=COL_TEXT_DIM).grid(
+            row=0, column=0, sticky="w"
+        )
+        self.device_var = ctk.StringVar(value=str(data.get("device") or ""))
         if devices:
-            ttk.Combobox(self.frame, textvariable=self.device_var, values=devices, width=38).grid(
-                row=0, column=1, padx=2, sticky="ew"
+            self.device_widget = ctk.CTkComboBox(
+                mid, values=devices, variable=self.device_var, width=320, height=30,
             )
         else:
-            ttk.Entry(self.frame, textvariable=self.device_var, width=38).grid(row=0, column=1, padx=2, sticky="ew")
+            self.device_widget = ctk.CTkEntry(mid, textvariable=self.device_var, width=320, height=30)
+        self.device_widget.grid(row=0, column=1, sticky="ew", padx=(8, 0))
 
-        # Soundfont path + browse
-        self.sf_var = tk.StringVar(value=str(data.get("soundfont") or ""))
-        ttk.Entry(self.frame, textvariable=self.sf_var, width=24).grid(row=0, column=2, padx=2, sticky="ew")
-        ttk.Button(self.frame, text="...", width=3, command=self._browse_sf).grid(row=0, column=3, padx=1)
-
-        # Gain
-        self.gain_var = tk.DoubleVar(value=float(data.get("gain", 0.5)))
-        ttk.Spinbox(self.frame, from_=0.0, to=2.0, increment=0.05, textvariable=self.gain_var, width=5).grid(
-            row=0, column=4, padx=2
+        ctk.CTkLabel(mid, text="Soundfont", width=60, anchor="w", text_color=COL_TEXT_DIM).grid(
+            row=1, column=0, sticky="w", pady=(8, 0)
         )
+        sf_row = ctk.CTkFrame(mid, fg_color="transparent")
+        sf_row.grid(row=1, column=1, sticky="ew", padx=(8, 0), pady=(8, 0))
+        sf_row.grid_columnconfigure(0, weight=1)
+        self.sf_var = ctk.StringVar(value=str(data.get("soundfont") or ""))
+        ctk.CTkEntry(sf_row, textvariable=self.sf_var, height=30).grid(row=0, column=0, sticky="ew")
+        ctk.CTkButton(
+            sf_row, text="...", width=32, height=30, command=self._browse_sf,
+        ).grid(row=0, column=1, padx=(6, 0))
 
-        # Start/stop button + status
-        self.btn = ttk.Button(self.frame, text="Start", width=8, command=self.toggle)
-        self.btn.grid(row=0, column=5, padx=2)
-
-        self.status_var = tk.StringVar(value="stopped")
-        ttk.Label(self.frame, textvariable=self.status_var, width=10, anchor="w").grid(
-            row=0, column=6, padx=2, sticky="w"
+        # -- gain slider (column 2)
+        right = ctk.CTkFrame(self, fg_color="transparent")
+        right.grid(row=0, column=2, padx=8, pady=12, sticky="nse")
+        ctk.CTkLabel(right, text="Gain", text_color=COL_TEXT_DIM).pack(anchor="w")
+        gain_row = ctk.CTkFrame(right, fg_color="transparent")
+        gain_row.pack(fill="x")
+        self.gain_var = ctk.DoubleVar(value=float(data.get("gain", 0.5)))
+        self.gain_label = ctk.CTkLabel(gain_row, text=f"{self.gain_var.get():.2f}", width=40)
+        self.gain_label.pack(side="right")
+        slider = ctk.CTkSlider(
+            gain_row, from_=0.0, to=2.0, number_of_steps=40, variable=self.gain_var,
+            command=self._on_gain, width=120,
         )
+        slider.pack(side="left", padx=(0, 8))
 
-        # Remove button
-        ttk.Button(self.frame, text="X", width=2, command=self._remove).grid(row=0, column=7, padx=1)
+        # -- action buttons (column 3)
+        actions = ctk.CTkFrame(self, fg_color="transparent")
+        actions.grid(row=0, column=3, padx=(8, 14), pady=12, sticky="nse")
+        self.btn = ctk.CTkButton(
+            actions, text="Start", width=88, height=34, command=self.toggle,
+            fg_color=COL_GREEN, hover_color=COL_GREEN_HI,
+        )
+        self.btn.pack(pady=(0, 6))
+        self.status_var = ctk.StringVar(value="stopped")
+        ctk.CTkLabel(actions, textvariable=self.status_var, text_color=COL_TEXT_DIM).pack()
+        ctk.CTkButton(
+            actions, text="Remove", width=88, height=24,
+            fg_color="transparent", border_width=1, hover_color=COL_CARD_HI,
+            command=self._remove,
+        ).pack(pady=(6, 0))
+
+    # ----- callbacks -----
+
+    def _on_gain(self, _val):
+        self.gain_label.configure(text=f"{self.gain_var.get():.2f}")
 
     def _browse_sf(self):
         path = filedialog.askopenfilename(
@@ -159,8 +211,10 @@ class BandmateRow:
             if not messagebox.askyesno("stop and remove?", f"{self.name_var.get()} is running. stop it and remove?"):
                 return
             self.stop()
-        self.frame.destroy()
-        self.app.remove_row(self)
+        self.destroy()
+        self.app.remove_card(self)
+
+    # ----- model -----
 
     def to_dict(self) -> dict:
         return {
@@ -216,8 +270,6 @@ class BandmateRow:
 
         creationflags = 0
         if sys.platform.startswith("win"):
-            # spawn each in its own console window so you can see logs
-            # for each bandmate independently. CREATE_NEW_CONSOLE = 0x10
             creationflags = subprocess.CREATE_NEW_CONSOLE  # type: ignore
 
         try:
@@ -226,10 +278,8 @@ class BandmateRow:
             messagebox.showerror("launch failed", str(e))
             return
 
-        self.status_var.set(f"running pid {self.proc.pid}")
-        self.btn.config(text="Stop")
-        self._monitor_thread = threading.Thread(target=self._monitor, daemon=True)
-        self._monitor_thread.start()
+        self._set_running(True, f"running pid {self.proc.pid}")
+        threading.Thread(target=self._monitor, daemon=True).start()
         log.info(f"started bandmate '{name}' pid {self.proc.pid}")
 
     def stop(self):
@@ -242,7 +292,6 @@ class BandmateRow:
                 self.proc.send_signal(signal.SIGTERM)
         except Exception as e:
             log.warning(f"stop failed: {e}")
-        # give it a moment, then force
         try:
             self.proc.wait(timeout=3)
         except Exception:
@@ -250,93 +299,151 @@ class BandmateRow:
                 self.proc.kill()
             except Exception:
                 pass
-        self.status_var.set("stopped")
-        self.btn.config(text="Start")
+        self._set_running(False, "stopped")
         log.info(f"stopped bandmate '{self.name_var.get()}'")
+
+    def _set_running(self, on: bool, status: str):
+        self.status_var.set(status)
+        if on:
+            self.dot.configure(text_color=COL_GREEN_HI)
+            self.btn.configure(text="Stop", fg_color=COL_RED, hover_color=COL_RED_HI)
+        else:
+            self.dot.configure(text_color=COL_TEXT_DIM)
+            self.btn.configure(text="Start", fg_color=COL_GREEN, hover_color=COL_GREEN_HI)
 
     def _monitor(self):
         if self.proc is None:
             return
         rc = self.proc.wait()
         # update from the tk thread
-        self.app.after(0, lambda: (self.status_var.set(f"exited ({rc})"), self.btn.config(text="Start")))
+        self.after(0, lambda: self._on_exit(rc))
+
+    def _on_exit(self, rc: int):
+        if rc == 0:
+            self._set_running(False, "stopped")
+        else:
+            self.status_var.set(f"exited ({rc})")
+            self.dot.configure(text_color=COL_YELLOW)
+            self.btn.configure(text="Start", fg_color=COL_GREEN, hover_color=COL_GREEN_HI)
 
 
-class LauncherApp(tk.Tk):
+class LauncherApp(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("midi_band launcher")
-        self.geometry("1100x500")
+        self.geometry("1180x680")
+        self.minsize(900, 480)
+        self.configure(fg_color=COL_BG)
 
         self.devices = list_output_devices()
         roster = load_roster()
         shared = roster.get("shared", {})
         bandmates = roster.get("bandmates", [])
 
-        # ----- shared settings strip -----
-        top = ttk.Frame(self, padding=8)
-        top.pack(fill="x")
-
-        ttk.Label(top, text="Host:").grid(row=0, column=0, padx=(0, 4))
-        self.host_var = tk.StringVar(value=str(shared.get("host", "")))
-        ttk.Entry(top, textvariable=self.host_var, width=18).grid(row=0, column=1, padx=4)
-
-        ttk.Label(top, text="Port:").grid(row=0, column=2, padx=(8, 4))
-        self.port_var = tk.IntVar(value=int(shared.get("port", 8766)))
-        ttk.Spinbox(top, from_=1, to=65535, textvariable=self.port_var, width=7).grid(row=0, column=3, padx=4)
-
-        ttk.Label(top, text="Driver:").grid(row=0, column=4, padx=(8, 4))
-        self.driver_var = tk.StringVar(value=str(shared.get("driver", DEFAULT_DRIVER)))
-        ttk.Combobox(
-            top, textvariable=self.driver_var, width=10,
-            values=["", "dsound", "wasapi", "alsa", "pulseaudio", "pipewire", "coreaudio"],
-        ).grid(row=0, column=5, padx=4)
-
-        ttk.Label(top, text="Default Soundfont:").grid(row=0, column=6, padx=(8, 4))
-        self.sf_var = tk.StringVar(value=str(shared.get("soundfont", "")))
-        ttk.Entry(top, textvariable=self.sf_var, width=28).grid(row=0, column=7, padx=4)
-        ttk.Button(top, text="...", width=3, command=self._browse_default_sf).grid(row=0, column=8)
-
-        ttk.Button(top, text="Save", command=self.save).grid(row=0, column=9, padx=(12, 4))
-
-        if _sd is None:
-            ttk.Label(
-                top, foreground="#aa6600",
-                text="(install 'sounddevice' for a real device dropdown)",
-            ).grid(row=1, column=0, columnspan=10, sticky="w", pady=(4, 0))
-
-        # ----- bandmate table -----
-        table_frame = ttk.Frame(self, padding=(6, 4))
-        table_frame.pack(fill="both", expand=True)
-
-        header = ttk.Frame(table_frame, padding=(6, 2))
-        header.grid(row=0, column=0, sticky="ew")
-        for col, (txt, w) in enumerate([
-            ("Name", 14), ("Output Device", 38), ("Soundfont", 24), ("", 3), ("Gain", 5), ("Action", 8),
-            ("Status", 10), ("", 2),
-        ]):
-            ttk.Label(header, text=txt, width=w, anchor="w", font=("", 9, "bold")).grid(row=0, column=col, padx=2, sticky="w")
-
-        self._table_parent = table_frame
-        self.rows: List[BandmateRow] = []
-        if not bandmates:
-            bandmates = [{"name": "drummer", "device": "", "soundfont": "", "gain": 0.5}]
-        for i, bm in enumerate(bandmates):
-            self._add_row_data(bm)
-
-        # ----- bottom bar -----
-        bottom = ttk.Frame(self, padding=8)
-        bottom.pack(fill="x")
-        ttk.Button(bottom, text="+ Add bandmate", command=self.add_row).pack(side="left")
-        ttk.Button(bottom, text="Start all", command=self.start_all).pack(side="left", padx=(8, 0))
-        ttk.Button(bottom, text="Stop all", command=self.stop_all).pack(side="left", padx=(4, 0))
+        self._build_header(shared)
+        self._build_table(bandmates)
+        self._build_footer()
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
+    # ----- layout -----
+
+    def _build_header(self, shared: dict):
+        header = ctk.CTkFrame(self, fg_color=COL_CARD, corner_radius=12)
+        header.pack(fill="x", padx=14, pady=(14, 8))
+
+        title = ctk.CTkFrame(header, fg_color="transparent")
+        title.pack(fill="x", padx=14, pady=(10, 0))
+        ctk.CTkLabel(
+            title, text="midi_band launcher",
+            font=("Segoe UI", 18, "bold"),
+        ).pack(side="left")
+        ctk.CTkLabel(
+            title, text="  Project Gabriel  \u2022  multi-bandmate", text_color=COL_TEXT_DIM,
+            font=("Segoe UI", 11),
+        ).pack(side="left")
+
+        body = ctk.CTkFrame(header, fg_color="transparent")
+        body.pack(fill="x", padx=14, pady=(8, 12))
+        for c in range(8):
+            body.grid_columnconfigure(c, weight=0)
+        body.grid_columnconfigure(7, weight=1)
+
+        ctk.CTkLabel(body, text="Host", text_color=COL_TEXT_DIM).grid(row=0, column=0, padx=(0, 4), sticky="w")
+        self.host_var = ctk.StringVar(value=str(shared.get("host", "")))
+        ctk.CTkEntry(body, textvariable=self.host_var, width=160, height=30).grid(row=0, column=1, padx=(0, 12))
+
+        ctk.CTkLabel(body, text="Port", text_color=COL_TEXT_DIM).grid(row=0, column=2, padx=(0, 4))
+        self.port_var = ctk.StringVar(value=str(shared.get("port", 8766)))
+        ctk.CTkEntry(body, textvariable=self.port_var, width=80, height=30).grid(row=0, column=3, padx=(0, 12))
+
+        ctk.CTkLabel(body, text="Driver", text_color=COL_TEXT_DIM).grid(row=0, column=4, padx=(0, 4))
+        self.driver_var = ctk.StringVar(value=str(shared.get("driver", DEFAULT_DRIVER)))
+        ctk.CTkComboBox(
+            body, variable=self.driver_var, width=130, height=30,
+            values=["", "dsound", "wasapi", "alsa", "pulseaudio", "pipewire", "coreaudio"],
+        ).grid(row=0, column=5, padx=(0, 12))
+
+        ctk.CTkLabel(body, text="Default Soundfont", text_color=COL_TEXT_DIM).grid(row=0, column=6, padx=(0, 4))
+        sf_box = ctk.CTkFrame(body, fg_color="transparent")
+        sf_box.grid(row=0, column=7, sticky="ew")
+        sf_box.grid_columnconfigure(0, weight=1)
+        self.sf_var = ctk.StringVar(value=str(shared.get("soundfont", "")))
+        ctk.CTkEntry(sf_box, textvariable=self.sf_var, height=30).grid(row=0, column=0, sticky="ew")
+        ctk.CTkButton(sf_box, text="...", width=32, height=30, command=self._browse_default_sf).grid(
+            row=0, column=1, padx=(6, 0)
+        )
+
+        if _sd is None:
+            ctk.CTkLabel(
+                header, text_color=COL_YELLOW,
+                text="install 'sounddevice' for a real device dropdown   (pip install sounddevice)",
+                font=("Segoe UI", 10),
+            ).pack(anchor="w", padx=14, pady=(0, 10))
+
+    def _build_table(self, bandmates: List[dict]):
+        wrap = ctk.CTkFrame(self, fg_color="transparent")
+        wrap.pack(fill="both", expand=True, padx=14, pady=4)
+
+        self.scroller = ctk.CTkScrollableFrame(wrap, fg_color=COL_BG, corner_radius=0)
+        self.scroller.pack(fill="both", expand=True)
+
+        self.cards: List[BandmateCard] = []
+        if not bandmates:
+            bandmates = [{"name": "drummer", "device": "", "soundfont": "", "gain": 0.5}]
+        for bm in bandmates:
+            self._add_card_data(bm)
+
+    def _build_footer(self):
+        bottom = ctk.CTkFrame(self, fg_color=COL_CARD, corner_radius=12)
+        bottom.pack(fill="x", padx=14, pady=(8, 14))
+
+        ctk.CTkButton(
+            bottom, text="+ Add bandmate", width=140, height=34, command=self.add_card,
+        ).pack(side="left", padx=(14, 6), pady=10)
+        ctk.CTkButton(
+            bottom, text="Start all", width=100, height=34, command=self.start_all,
+            fg_color=COL_GREEN, hover_color=COL_GREEN_HI,
+        ).pack(side="left", padx=6, pady=10)
+        ctk.CTkButton(
+            bottom, text="Stop all", width=100, height=34, command=self.stop_all,
+            fg_color=COL_RED, hover_color=COL_RED_HI,
+        ).pack(side="left", padx=6, pady=10)
+        ctk.CTkButton(
+            bottom, text="Save roster", width=120, height=34, command=self.save,
+            fg_color="transparent", border_width=1,
+        ).pack(side="right", padx=(6, 14), pady=10)
+
+    # ----- helpers -----
+
     def shared_settings(self) -> dict:
+        try:
+            port = int(self.port_var.get())
+        except Exception:
+            port = 8766
         return {
             "host": self.host_var.get().strip(),
-            "port": int(self.port_var.get()),
+            "port": port,
             "driver": self.driver_var.get().strip(),
             "soundfont": self.sf_var.get().strip(),
         }
@@ -349,46 +456,45 @@ class LauncherApp(tk.Tk):
         if path:
             self.sf_var.set(path)
 
-    def _add_row_data(self, data: dict):
-        row = BandmateRow(self, self._table_parent, len(self.rows), data, self.devices)
-        self.rows.append(row)
+    def _add_card_data(self, data: dict):
+        card = BandmateCard(self, self.scroller, data, self.devices)
+        card.pack(fill="x", padx=4, pady=6)
+        self.cards.append(card)
 
-    def add_row(self):
-        self._add_row_data({"name": f"bandmate_{len(self.rows) + 1}", "device": "", "soundfont": "", "gain": 0.5})
+    def add_card(self):
+        self._add_card_data({
+            "name": f"bandmate_{len(self.cards) + 1}",
+            "device": "",
+            "soundfont": "",
+            "gain": 0.5,
+        })
 
-    def remove_row(self, row: BandmateRow):
-        if row in self.rows:
-            self.rows.remove(row)
-        # re-grid remaining rows
-        for i, r in enumerate(self.rows):
-            r.idx = i
-            r.frame.grid_configure(row=i + 1)
+    def remove_card(self, card: BandmateCard):
+        if card in self.cards:
+            self.cards.remove(card)
 
     def save(self):
-        data = {
-            "shared": self.shared_settings(),
-            "bandmates": [r.to_dict() for r in self.rows],
-        }
+        data = {"shared": self.shared_settings(), "bandmates": [c.to_dict() for c in self.cards]}
         save_roster(data)
-        log.info(f"saved roster ({len(self.rows)} bandmates) -> {ROSTER_PATH}")
+        log.info(f"saved roster ({len(self.cards)} bandmates) -> {ROSTER_PATH}")
 
     def start_all(self):
-        for r in self.rows:
-            if not r.is_running():
-                r.start()
+        for c in self.cards:
+            if not c.is_running():
+                c.start()
 
     def stop_all(self):
-        for r in self.rows:
-            if r.is_running():
-                r.stop()
+        for c in self.cards:
+            if c.is_running():
+                c.stop()
 
     def _on_close(self):
-        running = [r for r in self.rows if r.is_running()]
+        running = [c for c in self.cards if c.is_running()]
         if running:
             if not messagebox.askyesno("quit", f"{len(running)} bandmate(s) still running. stop them and quit?"):
                 return
-            for r in running:
-                r.stop()
+            for c in running:
+                c.stop()
         self.save()
         self.destroy()
 

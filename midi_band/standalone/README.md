@@ -100,26 +100,23 @@ different players.
 
 ### The easy way: launcher GUI
 
-Run the included tkinter launcher to manage all your bandmates from
-one window:
-
-```powershell
-uv run launcher_gui.py
-```
-
-It lets you add as many bandmate rows as you want, each with its own
-name, output device dropdown, soundfont and gain. Start/stop them
-individually or all at once. The roster persists to `bandmates.yml`.
-
-For the device dropdown to be populated with real device names, also
-install the `gui` extra:
+Run the included CustomTkinter launcher to manage all your bandmates
+from one dark-themed window:
 
 ```powershell
 uv pip install -e ".[gui]"
+uv run launcher_gui.py
 ```
 
-(without it the device field becomes a free-text entry, which still
-works, you just have to type the device name yourself.)
+The `gui` extra installs **customtkinter** (required for the launcher)
+and **sounddevice** (lets the launcher show real device names in the
+output dropdown). If you skip `sounddevice` the device field becomes
+a free-text entry, which still works.
+
+The launcher lets you add as many bandmate cards as you want, each
+with its own name, output device, soundfont and gain slider.
+Start/stop them individually or use Start all / Stop all. The roster
+persists to `bandmates.yml` and autosaves on quit.
 
 ### The manual way
 
