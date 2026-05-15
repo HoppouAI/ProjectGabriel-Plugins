@@ -23,7 +23,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import re
+import threading
+import time
 import logging
 import signal
 import sys
@@ -147,6 +150,43 @@ def _set_windows_app_id(name: str) -> None:
         pass
 
 
+def _rename_audio_session_loop(name: str, log: logging.Logger) -> None:
+    """Rename this process's WASAPI audio session so the windows volume
+    mixer shows the bandmate name instead of 'Python'. The session
+    doesn't exist until fluidsynth opens an audio device, so retry for
+    a while. Best-effort, no-op if pycaw isn't installed.
+    """
+    if not sys.platform.startswith("win"):
+        return
+    try:
+        from pycaw.pycaw import AudioUtilities  # type: ignore
+    except Exception as e:
+        log.info(
+            "pycaw not installed, the volume mixer will keep showing this "
+            f"bandmate as 'Python' instead of '{name}'. install with: "
+            "pip install pycaw   ({e})".format(e=e)
+        )
+        return
+    my_pid = os.getpid()
+    label = f"midi_band: {name}"
+    deadline = time.monotonic() + 60.0
+    while time.monotonic() < deadline:
+        try:
+            sessions = AudioUtilities.GetAllSessions()
+            for s in sessions:
+                try:
+                    if s.Process and s.Process.pid == my_pid:
+                        s._ctl.SetDisplayName(label, None)
+                        log.info(f"renamed audio session to '{label}' in volume mixer")
+                        return
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        time.sleep(1.0)
+    log.debug("gave up renaming audio session, never showed up")
+
+
 def _list_devices_and_exit():
     # try sounddevice first, it gives consistent names across host APIs
     try:
@@ -267,6 +307,10 @@ def main():
 
     async def run():
         client.start()
+        # rename the volume mixer entry once fluidsynth opens its session
+        threading.Thread(
+            target=_rename_audio_session_loop, args=(str(name), log), daemon=True
+        ).start()
         stop = asyncio.Event()
         loop = asyncio.get_running_loop()
 
