@@ -46,7 +46,7 @@ class BandChatbox:
             return None
         tracks = list(s.get("tracks") or [])
         if tracks and isinstance(tracks[0], dict):
-            tracks = [t.get("name") or "?" for t in tracks]
+            tracks = [t.get("display_label") or t.get("instrument") or t.get("name") or "?" for t in tracks]
         if not tracks:
             tracks = ["(no tracks assigned)"]
         prefix = "midi (paused): " if s.get("paused") else "midi: "

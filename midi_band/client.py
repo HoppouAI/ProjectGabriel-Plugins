@@ -63,6 +63,8 @@ class BandClient:
         self._pending_song: str = ""
         self._pending_track_names: List[str] = []
         self._pending_duration: float = 0.0
+        self._pending_count_in_beats: int = 0
+        self._pending_count_in_bpm: float = 120.0
         self._last_rtt: float = 0.0
         self._last_jitter: float = 0.0  # deviation of latest offset sample from smoothed
         self._sync_samples: collections.deque = collections.deque(maxlen=SYNC_SAMPLE_WINDOW)
@@ -351,6 +353,8 @@ class BandClient:
         self._pending_song = song
         self._pending_track_names = track_names
         self._pending_duration = duration
+        self._pending_count_in_beats = int(msg.get("count_in_beats") or 0)
+        self._pending_count_in_bpm = float(msg.get("count_in_bpm") or 120.0)
         # quick offset refresh, then ready
         await self._ping_burst()
         try:
@@ -373,12 +377,17 @@ class BandClient:
         try:
             file_bytes = base64.b64decode(self._pending_file_b64 or "")
             events = midi_utils.expand_track_events(file_bytes, self._pending_tracks)
+            events, count_in_lead = midi_utils.with_count_in(
+                events,
+                self._pending_count_in_beats,
+                self._pending_count_in_bpm,
+            )
         except Exception as e:
             logger.error(f"midi_band: failed to expand events: {e}")
             return
         self.player.schedule(
             events, local_start, self._pending_song,
-            self._pending_track_names, self._pending_duration,
+            self._pending_track_names, self._pending_duration + count_in_lead,
         )
         self.on_change()
 

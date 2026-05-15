@@ -51,6 +51,8 @@ class BandServer:
         library_dir: Path,
         schedule_lead_seconds: float = 1.5,
         on_change: Optional[Callable[[], None]] = None,
+        count_in_beats: int = 4,
+        count_in_bpm: float = 120.0,
     ):
         self.bind = bind or "0.0.0.0"
         self.port = int(port)
@@ -58,6 +60,8 @@ class BandServer:
         self.player = player
         self.library_dir = library_dir
         self.lead = max(0.5, float(schedule_lead_seconds))
+        self.count_in_beats = max(0, int(count_in_beats))
+        self.count_in_bpm = max(20.0, float(count_in_bpm))
         self.on_change = on_change or (lambda: None)
 
         self._server: Optional[asyncio.AbstractServer] = None
@@ -396,7 +400,7 @@ class BandServer:
 
         for peer in peers_at_prepare:
             tracks = self._assignments.get(peer.name, [])
-            track_names = [track_info[i]["name"] for i in tracks if 0 <= i < len(track_info)]
+            track_names = [track_info[i].get("display_label") or track_info[i]["name"] for i in tracks if 0 <= i < len(track_info)]
             try:
                 peer.writer.write(P.encode({
                     "type": P.PREPARE,
@@ -406,6 +410,8 @@ class BandServer:
                     "tracks": tracks,
                     "track_names": track_names,
                     "duration": duration,
+                    "count_in_beats": self.count_in_beats,
+                    "count_in_bpm": self.count_in_bpm,
                 }))
                 await peer.writer.drain()
             except Exception as e:
@@ -442,11 +448,14 @@ class BandServer:
 
         # also schedule local host playback
         host_tracks = self._host_tracks
-        host_track_names = [track_info[i]["name"] for i in host_tracks if 0 <= i < len(track_info)]
+        host_track_names = [track_info[i].get("display_label") or track_info[i]["name"] for i in host_tracks if 0 <= i < len(track_info)]
         if host_tracks:
             events = midi_utils.expand_track_events(file_bytes, host_tracks)
+            events, count_in_lead = midi_utils.with_count_in(
+                events, self.count_in_beats, self.count_in_bpm
+            )
             self.player.schedule(events, start_at, self._loaded_song,
-                                 host_track_names, duration)
+                                 host_track_names, duration + count_in_lead)
         self.on_change()
         return {
             "result": "ok",
@@ -559,7 +568,7 @@ class BandServer:
         # build per-name list of instrument labels from current assignments
         track_names: List[str] = []
         if self._loaded_info:
-            track_names = [t.get("name") or f"track {t.get('index')}" for t in self._loaded_info["tracks"]]
+            track_names = [t.get("display_label") or t.get("instrument") or t.get("name") or f"track {t.get('index')}" for t in self._loaded_info["tracks"]]
         def labels_for(name: str) -> List[str]:
             idxs = self._assignments.get(name) or []
             return [track_names[i] if 0 <= i < len(track_names) else f"track {i}" for i in idxs]

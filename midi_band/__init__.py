@@ -87,6 +87,8 @@ class MidiBandPlugin(Plugin):
         gain = float(cfg("synth_gain", 0.5) or 0.5)
         driver = cfg("audio_driver")
         chatbox_priority = int(cfg("chatbox_priority", 25) or 25)
+        count_in_beats = int(cfg("count_in_beats", 4) if cfg("count_in_beats") is not None else 4)
+        count_in_bpm = float(cfg("count_in_bpm", 120.0) or 120.0)
 
         sf = cfg("soundfont")
         soundfont = Path(str(sf)).expanduser() if sf else None
@@ -120,6 +122,8 @@ class MidiBandPlugin(Plugin):
                 player=player,
                 library_dir=library_dir,
                 schedule_lead_seconds=lead,
+                count_in_beats=count_in_beats,
+                count_in_bpm=count_in_bpm,
             )
             BandTools._server = server
             BandTools._client = None
@@ -207,7 +211,8 @@ def _host_chatbox_status(server) -> dict:
         host_tracks = info.get("host_tracks") or []
         all_tracks = info.get("tracks") or []
         track_names = [
-            all_tracks[i]["name"] for i in host_tracks
+            all_tracks[i].get("display_label") or all_tracks[i]["name"]
+            for i in host_tracks
             if 0 <= i < len(all_tracks)
         ]
     return {

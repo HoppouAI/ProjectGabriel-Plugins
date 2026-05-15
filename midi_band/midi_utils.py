@@ -190,10 +190,17 @@ def parse_tracks(file_bytes: bytes) -> dict:
         if not name:
             name = instrument or f"Track {i}"
 
+        # display_label is what shows in the chatbox / UI / sync rows.
+        # We avoid raw track names because some midi files stash author
+        # metadata, emails, etc. in there. Prefer the GM instrument
+        # always, fall back to a generic label.
+        display_label = instrument or f"Track {i + 1}"
+
         tracks_info.append({
             "index": i,
             "name": name,
             "instrument": instrument,
+            "display_label": display_label,
             "channels": sorted(channels),
             "note_count": note_count,
             "duration": round(track_dur, 2),
@@ -305,3 +312,26 @@ def expand_track_events(file_bytes: bytes, track_indices: list) -> list:
         events.append((0.0, _mido.Message("program_change", channel=ch, program=prog)))
     events.sort(key=lambda x: x[0])
     return events
+
+
+def with_count_in(events: list, beats: int = 4, bpm: float = 120.0) -> tuple:
+    """Prepend a metronome count-in to events. Returns (new_events, lead_seconds).
+    Standard 4-on-the-floor click on GM percussion (channel 9, hi wood block)
+    so all clients hear the same thing regardless of their assigned tracks.
+    Beat 1 is accented."""
+    import mido
+    if beats <= 0 or bpm <= 0:
+        return list(events), 0.0
+    beat_dur = 60.0 / float(bpm)
+    note = 76  # Hi Wood Block
+    click = []
+    for i in range(int(beats)):
+        t = i * beat_dur
+        vel = 110 if i == 0 else 90
+        click.append((t, mido.Message("note_on", channel=9, note=note, velocity=vel)))
+        click.append((t + 0.08, mido.Message("note_off", channel=9, note=note, velocity=0)))
+    lead = beats * beat_dur
+    shifted = [(o + lead, m) for (o, m) in events]
+    out = click + shifted
+    out.sort(key=lambda x: x[0])
+    return out, lead
