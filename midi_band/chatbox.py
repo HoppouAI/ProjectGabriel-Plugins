@@ -5,6 +5,22 @@ shows their own slice so the chatbox is per-player.
 from __future__ import annotations
 
 CHATBOX_MAX = 144
+DIVIDER = "\u2500" * 14
+BAR_WIDTH = 14
+
+
+def _fmt_time(t: float) -> str:
+    t = max(0, int(t))
+    return f"{t // 60}:{t % 60:02d}"
+
+
+def _progress_bar(pos: float, dur: float) -> str:
+    if dur <= 0:
+        return ""
+    frac = max(0.0, min(1.0, pos / dur))
+    filled = int(round(frac * BAR_WIDTH))
+    bar = "\u2588" * filled + "\u2591" * (BAR_WIDTH - filled)
+    return f"{bar} {_fmt_time(pos)}/{_fmt_time(dur)}"
 
 
 class BandChatbox:
@@ -29,12 +45,14 @@ class BandChatbox:
         if not song:
             return None
         tracks = list(s.get("tracks") or [])
-        # accept either ["Drums", "Bass"] or [{"name": "..."}, ...]
         if tracks and isinstance(tracks[0], dict):
             tracks = [t.get("name") or "?" for t in tracks]
         if not tracks:
             tracks = ["(no tracks assigned)"]
-        body_lines = [f"midi: {song}", "-----"] + tracks
-        out = "\n".join(body_lines)
-        # let the host paginator handle the >144 char case
-        return out
+        lines = [f"midi: {song}", DIVIDER]
+        bar = _progress_bar(float(s.get("position") or 0.0),
+                            float(s.get("duration") or 0.0))
+        if bar:
+            lines.append(bar)
+        lines.extend(tracks)
+        return "\n".join(lines)
