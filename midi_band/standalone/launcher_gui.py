@@ -16,6 +16,8 @@ output-device dropdown:
 from __future__ import annotations
 
 import logging
+import os
+import re
 import signal
 import subprocess
 import sys
@@ -23,6 +25,33 @@ import threading
 from pathlib import Path
 from tkinter import filedialog, messagebox
 from typing import List, Optional
+
+
+def _python_alias_for(name: str) -> str:
+    """Return a python.exe path uniquely named for this bandmate so the
+    Windows volume mixer treats it as its own app instead of lumping all
+    bandmates under one shared 'python.exe' per-app routing entry.
+
+    Hardlinks sys.executable inside its own folder so adjacent DLLs
+    (python3XX.dll, vcruntime, ...) are still found. Falls back to
+    sys.executable on non-Windows or if the link fails.
+    """
+    if not sys.platform.startswith("win"):
+        return sys.executable
+    safe = re.sub(r"[^A-Za-z0-9_-]+", "_", name).strip("_") or "bandmate"
+    src = Path(sys.executable)
+    dst = src.parent / f"gabriel_{safe}.exe"
+    if dst.exists():
+        return str(dst)
+    try:
+        os.link(src, dst)
+        return str(dst)
+    except OSError as e:
+        logging.getLogger("midi_band.launcher").warning(
+            f"could not alias python.exe for '{name}' ({e}); "
+            f"per-app audio routing will lump bandmates together."
+        )
+        return sys.executable
 
 try:
     import customtkinter as ctk
@@ -255,8 +284,11 @@ class BandmateCard(ctk.CTkFrame):
             messagebox.showerror("missing client", f"can't find {CLIENT_PATH}. keep launcher in standalone/ folder.")
             return
 
+        # use a per-bandmate python alias so windows volume mixer can
+        # route each instance to its own audio device
+        py_exe = _python_alias_for(name)
         cmd = [
-            sys.executable, str(CLIENT_PATH),
+            py_exe, str(CLIENT_PATH),
             "--host", host,
             "--port", str(port),
             "--name", name,

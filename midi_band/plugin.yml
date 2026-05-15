@@ -1,5 +1,5 @@
 name: midi_band
-version: 0.7.7
+version: 0.7.8
 api_version: 1
 author: HoppouAI
 description: Multiple Gabriel instances on the same LAN form a band, each plays different MIDI tracks of the same song in sync via a soundfont. Includes a standalone client for non-Gabriel players.

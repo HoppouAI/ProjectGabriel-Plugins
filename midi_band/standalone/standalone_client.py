@@ -113,6 +113,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Don't try to download fluidsynth if missing. Use only what is already on PATH.",
     )
     p.add_argument("--log-level", default=None, help="Python logging level.")
+    p.add_argument(
+        "--list-devices", action="store_true",
+        help="Print all audio output device names this machine can route to and exit. "
+             "Use the names exactly as printed for --device.",
+    )
     return p
 
 
@@ -124,8 +129,45 @@ def _pick(cli_val, cfg, key, default):
     return default
 
 
+def _list_devices_and_exit():
+    # try sounddevice first, it gives consistent names across host APIs
+    try:
+        import sounddevice as sd  # type: ignore
+        try:
+            apis = sd.query_hostapis()
+        except Exception:
+            apis = []
+        print("\nOUTPUT DEVICES (use the name exactly as printed for --device):\n")
+        seen = set()
+        for d in sd.query_devices():
+            if d.get("max_output_channels", 0) <= 0:
+                continue
+            name = str(d.get("name", "")).strip()
+            api_idx = d.get("hostapi", -1)
+            api_name = apis[api_idx]["name"] if 0 <= api_idx < len(apis) else "?"
+            line = f"  [{api_name:<14}] {name}"
+            if line in seen:
+                continue
+            seen.add(line)
+            print(line)
+        print(
+            "\nWindows tips:\n"
+            "  - dsound driver: use the friendly name as shown by 'MME' or 'Windows DirectSound' rows.\n"
+            "  - wasapi driver: use the friendly name as shown by 'Windows WASAPI' rows.\n"
+            "  - virtual audio cables show up as 'Line 1 (Virtual Audio Cable)' or 'CABLE Input (VB-Audio Virtual Cable)'.\n"
+        )
+    except ImportError:
+        print(
+            "sounddevice isn't installed. install with:  pip install sounddevice\n"
+            "or just leave --device blank to use the system default device."
+        )
+    sys.exit(0)
+
+
 def main():
     args = _build_parser().parse_args()
+    if args.list_devices:
+        _list_devices_and_exit()
     cfg = _load_config(Path(args.config).expanduser())
 
     host = _pick(args.host, cfg, "host", None)
