@@ -318,20 +318,30 @@ async function refreshSync() {
     syncListEl.innerHTML = `<li class="empty">no remote bandmates</li>`;
     return;
   }
-  const tight = members.filter((m) => syncQuality(m.jitter_ms, m.rtt_ms, m.age_seconds) === "tight").length;
-  syncSummaryEl.textContent = `${members.length} bandmate${members.length === 1 ? "" : "s"} \u00b7 ${tight} tight \u00b7 lead ${(s.lead_seconds || 0).toFixed(2)}s`;
+  const tight = members.filter((m) => !m.is_host && syncQuality(m.jitter_ms, m.rtt_ms, m.age_seconds) === "tight").length;
+  const remoteCount = members.filter((m) => !m.is_host).length;
+  syncSummaryEl.textContent = `${remoteCount} bandmate${remoteCount === 1 ? "" : "s"} \u00b7 ${tight} tight \u00b7 lead ${(s.lead_seconds || 0).toFixed(2)}s`;
   syncListEl.innerHTML = members
     .map((m) => {
-      const q = syncQuality(m.jitter_ms, m.rtt_ms, m.age_seconds);
-      const ageTxt = m.age_seconds == null ? "no data yet" : `${m.age_seconds.toFixed(1)}s ago`;
+      const q = m.is_host ? "host" : syncQuality(m.jitter_ms, m.rtt_ms, m.age_seconds);
+      const ageTxt = m.is_host ? "you" : (m.age_seconds == null ? "no data yet" : `${m.age_seconds.toFixed(1)}s ago`);
+      const stats = m.is_host
+        ? `<span class="dim">host clock</span>`
+        : `<span><b>jitter</b> ${m.jitter_ms.toFixed(1)}ms</span>
+           <span><b>rtt</b> ${m.rtt_ms.toFixed(1)}ms</span>`;
+      const tracks = (m.tracks && m.tracks.length)
+        ? m.tracks.map((t) => `<span class="instr">${escapeHtml(t)}</span>`).join("")
+        : `<span class="instr none">no tracks</span>`;
       return `<li class="sync-row q-${q}">
-        <span class="sync-name">${escapeHtml(m.name)}</span>
-        <span class="sync-stats">
-          <span><b>jitter</b> ${m.jitter_ms.toFixed(1)}ms</span>
-          <span><b>rtt</b> ${m.rtt_ms.toFixed(1)}ms</span>
-          <span class="dim">${ageTxt}</span>
-          <span class="sync-pill q-${q}">${q}</span>
-        </span>
+        <div class="sync-top">
+          <span class="sync-name">${escapeHtml(m.name)}${m.is_host ? ' <span class="dim">(host)</span>' : ""}</span>
+          <span class="sync-stats">
+            ${stats}
+            <span class="dim">${ageTxt}</span>
+            <span class="sync-pill q-${q}">${q}</span>
+          </span>
+        </div>
+        <div class="sync-instruments">${tracks}</div>
       </li>`;
     })
     .join("");

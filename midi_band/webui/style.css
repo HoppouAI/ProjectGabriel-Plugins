@@ -241,14 +241,17 @@ footer {
   margin-top: auto;
 }
 
+
 /* sync section */
 .sync-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .sync-list .empty { padding: 10px 12px; color: var(--dim); border: 1px dashed var(--line); border-radius: 6px; }
-.sync-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 8px 12px; background: var(--panel2); border: 1px solid var(--line); border-radius: 6px; border-left-width: 4px; }
-.sync-row.q-tight  { border-left-color: var(--accent); }
-.sync-row.q-ok     { border-left-color: var(--accent2); }
-.sync-row.q-loose  { border-left-color: var(--warn); }
-.sync-row.q-stale  { border-left-color: var(--err); }
+.sync-row { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; transition: background 0.4s linear, border-color 0.4s linear; }
+.sync-row.q-tight  { background: linear-gradient(90deg, rgba(78,201,176,0.18), rgba(78,201,176,0.04)); border-color: var(--accent); }
+.sync-row.q-ok     { background: linear-gradient(90deg, rgba(88,166,255,0.18), rgba(88,166,255,0.04)); border-color: var(--accent2); }
+.sync-row.q-loose  { background: linear-gradient(90deg, rgba(210,153,34,0.22), rgba(210,153,34,0.04)); border-color: var(--warn); }
+.sync-row.q-stale  { background: linear-gradient(90deg, rgba(248,81,73,0.22), rgba(248,81,73,0.04)); border-color: var(--err); }
+.sync-row.q-host   { background: linear-gradient(90deg, rgba(78,201,176,0.10), rgba(255,255,255,0.02)); border-color: var(--line); }
+.sync-top { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
 .sync-name { font-weight: 600; }
 .sync-stats { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; font-variant-numeric: tabular-nums; font-size: 13px; }
 .sync-stats b { font-weight: 600; color: var(--dim); margin-right: 4px; }
@@ -257,3 +260,7 @@ footer {
 .sync-pill.q-ok     { color: var(--accent2); border-color: var(--accent2); }
 .sync-pill.q-loose  { color: var(--warn);    border-color: var(--warn); }
 .sync-pill.q-stale  { color: var(--err);     border-color: var(--err); }
+.sync-pill.q-host   { color: var(--dim);     border-color: var(--line); }
+.sync-instruments { display: flex; flex-wrap: wrap; gap: 4px; }
+.sync-instruments .instr { font-size: 12px; padding: 2px 8px; border-radius: 4px; background: rgba(255,255,255,0.05); border: 1px solid var(--line); }
+.sync-instruments .instr.none { color: var(--dim); font-style: italic; background: transparent; }

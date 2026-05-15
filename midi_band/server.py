@@ -534,20 +534,38 @@ class BandServer:
     def get_sync_status(self) -> dict:
         """Snapshot of clock-sync health for every connected client."""
         now = _now()
-        members = []
+        # build per-name list of instrument labels from current assignments
+        track_names: List[str] = []
+        if self._loaded_info:
+            track_names = [t.get("name") or f"track {t.get('index')}" for t in self._loaded_info["tracks"]]
+        def labels_for(name: str) -> List[str]:
+            idxs = self._assignments.get(name) or []
+            return [track_names[i] if 0 <= i < len(track_names) else f"track {i}" for i in idxs]
+        host_labels = [track_names[i] if 0 <= i < len(track_names) else f"track {i}" for i in self._host_tracks]
+        members = [{
+            "name": self.instance_name,
+            "is_host": True,
+            "tracks": host_labels,
+            "jitter_ms": 0.0,
+            "rtt_ms": 0.0,
+            "age_seconds": 0.0,
+        }]
         for peer in self._peers.values():
             age = now - peer.sync_updated_at if peer.sync_updated_at else None
             members.append({
                 "name": peer.name,
+                "is_host": False,
+                "tracks": labels_for(peer.name),
                 "jitter_ms": round(peer.sync_jitter * 1000.0, 2),
                 "rtt_ms": round(peer.sync_rtt * 1000.0, 2),
                 "age_seconds": round(age, 2) if age is not None else None,
                 "ready_session": peer.ready_session,
                 "nack_reason": peer.nack_reason,
             })
-        members.sort(key=lambda m: m["name"])
+        members.sort(key=lambda m: (not m["is_host"], m["name"]))
         return {
             "host": self.instance_name,
             "lead_seconds": round(self.lead, 3),
+            "song": self._loaded_song,
             "members": members,
         }
