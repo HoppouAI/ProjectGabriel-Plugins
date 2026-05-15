@@ -53,6 +53,18 @@ class MidiPlayer:
         self._duration: float = 0.0
         self._native_primed = False
 
+    def _default_driver(self) -> Optional[str]:
+        # fluidsynth's auto driver is unreliable on Windows: it tries
+        # ALSA-style "default" which doesn't exist and prints
+        # 'Device "default" does not exist'. Force dsound there.
+        import platform as _plat
+        sysname = _plat.system()
+        if sysname == "Windows":
+            return "dsound"
+        if sysname == "Darwin":
+            return "coreaudio"
+        return None  # let fluidsynth pick on Linux/other
+
     def _prime_native(self) -> bool:
         if self._native_primed:
             return True
@@ -90,8 +102,9 @@ class MidiPlayer:
                 return True
             try:
                 self._fs = fs_mod.Synth(gain=self.gain)
-                if self.driver:
-                    self._fs.start(driver=self.driver)
+                drv = self.driver or self._default_driver()
+                if drv:
+                    self._fs.start(driver=drv)
                 else:
                     self._fs.start()
                 if self.soundfont and self.soundfont.exists():
