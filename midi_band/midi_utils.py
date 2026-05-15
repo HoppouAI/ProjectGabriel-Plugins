@@ -79,6 +79,41 @@ def load_midi_b64(path: Path) -> str:
     return base64.b64encode(path.read_bytes()).decode("ascii")
 
 
+# ordered: most specific first so "electric bass" hits before "bass"
+_NAME_HINTS = [
+    ("acoustic bass", 32), ("fretless bass", 35), ("slap bass", 36),
+    ("synth bass", 38), ("electric bass", 33), ("bass", 33),
+    ("distortion guitar", 30), ("overdriven guitar", 29),
+    ("electric guitar", 27), ("clean guitar", 27),
+    ("acoustic guitar", 25), ("nylon guitar", 24),
+    ("rhythm guitar", 27), ("lead guitar", 30), ("guitar", 27),
+    ("piano", 0), ("electric piano", 4), ("rhodes", 4),
+    ("organ", 16), ("hammond", 16),
+    ("violin", 40), ("viola", 41), ("cello", 42), ("contrabass", 43),
+    ("strings", 48), ("string ensemble", 48), ("orchestra", 48),
+    ("choir", 52), ("voice", 53), ("vocal", 53), ("vox", 53),
+    ("trumpet", 56), ("trombone", 57), ("tuba", 58),
+    ("french horn", 60), ("brass", 61),
+    ("soprano sax", 64), ("alto sax", 65), ("tenor sax", 66),
+    ("baritone sax", 67), ("sax", 65),
+    ("flute", 73), ("piccolo", 72), ("clarinet", 71), ("oboe", 68),
+    ("synth lead", 80), ("lead synth", 80), ("synth pad", 88),
+    ("pad", 88), ("synth", 80),
+    ("harp", 46), ("xylophone", 13), ("marimba", 12), ("vibraphone", 11),
+    ("banjo", 105), ("sitar", 104), ("accordion", 21), ("harmonica", 22),
+]
+
+
+def infer_program_from_name(track_name: str) -> Optional[int]:
+    if not track_name:
+        return None
+    low = track_name.lower()
+    for needle, prog in _NAME_HINTS:
+        if needle in low:
+            return prog
+    return None
+
+
 def _build_tempo_map(mid) -> list:
     """List of (abs_tick, tempo_us_per_beat). Tempo events can live in any
     track so we walk all of them and merge sorted."""
@@ -191,14 +226,46 @@ def expand_track_events(file_bytes: bytes, track_indices: list) -> list:
 
     # first pass: which channels do our tracks actually play on?
     used_channels = set()
+    track_names = {}
     for ti in wanted:
         if ti < 0 or ti >= len(mid.tracks):
             continue
         for msg in mid.tracks[ti]:
             if msg.is_meta:
+                if msg.type == "track_name" and ti not in track_names:
+                    track_names[ti] = (msg.name or "").strip()
                 continue
             if msg.type in note_kinds and hasattr(msg, "channel"):
                 used_channels.add(msg.channel)
+
+    # figure out per-channel program override from track names. lots of
+    # hand-made midis leave every program_change at 0 (piano) and rely on
+    # an external mapping, which makes everyone sound like piano. for our
+    # tracks, if a channel only ever asks for program 0, we infer something
+    # sensible from the track name.
+    channel_inferred = {}
+    for ti in wanted:
+        if ti < 0 or ti >= len(mid.tracks):
+            continue
+        name = track_names.get(ti, "")
+        inferred = infer_program_from_name(name)
+        if inferred is None:
+            continue
+        track_channels = set()
+        nonzero_program_seen = set()
+        for msg in mid.tracks[ti]:
+            if msg.is_meta:
+                continue
+            if hasattr(msg, "channel") and msg.type in note_kinds:
+                track_channels.add(msg.channel)
+            if msg.type == "program_change" and msg.program != 0:
+                nonzero_program_seen.add(msg.channel)
+        for ch in track_channels:
+            if ch == 9:
+                continue  # leave drums alone
+            if ch in nonzero_program_seen:
+                continue  # the midi already picked something, respect it
+            channel_inferred[ch] = inferred
 
     events = []
     for ti, track in enumerate(mid.tracks):
@@ -209,10 +276,32 @@ def expand_track_events(file_bytes: bytes, track_indices: list) -> list:
             if msg.is_meta:
                 continue
             t = msg.type
+            # rewrite program=0 on inferred channels so the synth picks
+            # the right instrument instead of grand piano
+            if t == "program_change" and msg.program == 0 \
+                    and msg.channel in channel_inferred:
+                try:
+                    msg = msg.copy(program=channel_inferred[msg.channel])
+                except Exception:
+                    pass
             if is_ours and (t in note_kinds or t in setup_kinds):
                 events.append((_ticks_to_seconds(abs_tick, tpb, tempo_map), msg))
             elif (not is_ours) and t in setup_kinds and \
                     hasattr(msg, "channel") and msg.channel in used_channels:
                 events.append((_ticks_to_seconds(abs_tick, tpb, tempo_map), msg))
+
+    # if a channel we're playing has NO program_change at all in any
+    # track, prepend one so fluidsynth doesnt sit on the per-channel
+    # default (piano). also covers the case where the inferred program
+    # never had a corresponding program=0 to rewrite.
+    seen_program_for = set()
+    for _, msg in events:
+        if msg.type == "program_change":
+            seen_program_for.add(msg.channel)
+    import mido as _mido
+    for ch, prog in channel_inferred.items():
+        if ch in seen_program_for:
+            continue
+        events.append((0.0, _mido.Message("program_change", channel=ch, program=prog)))
     events.sort(key=lambda x: x[0])
     return events
