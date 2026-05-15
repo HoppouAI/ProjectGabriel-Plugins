@@ -35,11 +35,13 @@ def _load_fs():
 class MidiPlayer:
     def __init__(self, soundfont: Optional[Path] = None, gain: float = 0.5,
                  driver: Optional[str] = None,
+                 device: Optional[str] = None,
                  auto_install_dir: Optional[Path] = None,
                  auto_install: bool = True):
         self.soundfont = soundfont
         self.gain = max(0.0, min(2.0, float(gain)))
         self.driver = driver
+        self.device = device
         self.auto_install_dir = auto_install_dir
         self.auto_install = bool(auto_install)
         self._fs = None
@@ -111,6 +113,14 @@ class MidiPlayer:
             try:
                 self._fs = fs_mod.Synth(gain=self.gain)
                 drv = self.driver or self._default_driver()
+                # route to a specific output device by name (e.g. a virtual
+                # audio cable) when set, so multiple instances can target
+                # different sinks instead of all stacking on the default.
+                if drv and self.device:
+                    try:
+                        self._fs.setting(f"audio.{drv}.device", str(self.device))
+                    except Exception as e:
+                        logger.warning(f"midi_band: could not set audio.{drv}.device='{self.device}': {e}")
                 if drv:
                     self._fs.start(driver=drv)
                 else:

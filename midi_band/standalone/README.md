@@ -88,6 +88,56 @@ a clear message.
   - windows: `dsound`, `wasapi`
   - linux: `alsa`, `pulseaudio`, `pipewire`
   - mac: `coreaudio`
+- `--device` -- output device name. Blank = system default. Set to a
+  specific device (e.g. a virtual audio cable) to route this client's
+  audio somewhere specific. See "Multiple instances" below.
+
+## Multiple instances (one bandmate per VRChat window)
+
+Each running instance is one bandmate. To have several you need
+each one's audio to land on its own input so VRChat instances pick up
+different players.
+
+1. Install [VB-CABLE](https://vb-audio.com/Cable/) (free). For more
+   than one extra cable get the A+B and C+D bundles too, or use
+   Voicemeeter Banana / Potato.
+2. Make a folder per bandmate, copy this `standalone/` folder into
+   each, and give each its own `config.yml`:
+
+   ```yaml
+   # drummer/config.yml
+   host: "192.168.1.50"
+   name: "drummer"
+   soundfont: "C:/sf2/GeneralUser.sf2"
+   driver: "dsound"
+   device: "CABLE Input (VB-Audio Virtual Cable)"
+   ```
+
+   ```yaml
+   # bassist/config.yml
+   host: "192.168.1.50"
+   name: "bassist"
+   soundfont: "C:/sf2/GeneralUser.sf2"
+   driver: "dsound"
+   device: "CABLE-A Input (VB-Audio Cable A)"
+   ```
+
+3. In each VRChat instance, set its mic input to the matching cable's
+   *Output* device (e.g. `CABLE Output` for drummer's instance).
+4. Launch the clients:
+
+   ```powershell
+   Start-Process -WorkingDirectory drummer  uv -ArgumentList "run","standalone_client.py"
+   Start-Process -WorkingDirectory bassist  uv -ArgumentList "run","standalone_client.py"
+   ```
+
+   Each spawns its own console window so you can see each client's
+   sync status independently.
+
+To find the exact device name strings, run `python -m sounddevice` or
+look in Windows' Sound settings under "Recording" for the cable
+*Output* names and "Playback" for the cable *Input* names. fluidsynth
+expects the playback (input) side, since that's where it sends audio.
 - `--cache-dir` -- where to save MIDI files received from the host.
   Default `./midi_cache/`.
 - `--fluidsynth-dir` -- where to extract the auto-downloaded

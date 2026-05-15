@@ -22,6 +22,10 @@ soundfont: "C:/sf2/GeneralUser.sf2"
 # Optional knobs.
 gain: 0.5
 driver: ""               # blank = autodetect. dsound / wasapi / alsa / coreaudio / ...
+device: ""               # blank = system default. set to a virtual audio cable
+                         # name to route this client somewhere specific. eg
+                         # "CABLE Input (VB-Audio Virtual Cable)" on Windows.
+                         # see README for the multi-instance setup.
 cache_dir: "midi_cache"  # MIDI files received from the host land here
 fluidsynth_dir: "vendor/fluidsynth"
 auto_install_fluidsynth: true

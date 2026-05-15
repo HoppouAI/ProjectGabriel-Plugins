@@ -97,6 +97,10 @@ def _build_parser() -> argparse.ArgumentParser:
         help="fluidsynth audio driver (dsound, alsa, coreaudio, pulseaudio, ...). Default = autodetect.",
     )
     p.add_argument(
+        "--device", default=None,
+        help="Audio device name to send output to. Eg the name of a virtual audio cable. Default = system default.",
+    )
+    p.add_argument(
         "--cache-dir", default=None,
         help="Folder to save MIDI files received from the host.",
     )
@@ -130,6 +134,7 @@ def main():
     soundfont = _pick(args.soundfont, cfg, "soundfont", None)
     gain = float(_pick(args.gain, cfg, "gain", 0.5))
     driver = _pick(args.driver, cfg, "driver", None)
+    device = _pick(args.device, cfg, "device", None)
     cache_dir = _pick(args.cache_dir, cfg, "cache_dir", "midi_cache")
     fluidsynth_dir = _pick(args.fluidsynth_dir, cfg, "fluidsynth_dir", "vendor/fluidsynth")
     # bool: cli flag forces False, otherwise config wins, default True
@@ -162,6 +167,7 @@ def main():
         soundfont=sf_path,
         gain=gain,
         driver=str(driver) if driver else None,
+        device=str(device) if device else None,
         auto_install_dir=fs_dir,
         auto_install=auto_install,
     )
@@ -179,6 +185,7 @@ def main():
         soundfont=str(sf_path),
         gain=gain,
         driver=str(driver) if driver else None,
+        device=str(device) if device else None,
         cache_dir=str(cache),
         auto_install=auto_install,
         fluidsynth_dir=str(fs_dir),
