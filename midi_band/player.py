@@ -194,17 +194,42 @@ class MidiPlayer:
         )
         return True
 
-    def _run(self, events, start_at, stop_flag):
+    def _boost_thread_priority(self):
+        """Tell the OS this thread is doing real-time audio work so it
+        gets scheduled ahead of the asyncio loop and webui server when
+        the GIL gets contended. Best-effort, swallow failures."""
         try:
-            # wait until start, mixed sleep + busy-wait for tight timing
+            import platform as _plat
+            if _plat.system() != "Windows":
+                return
+            import ctypes
+            # bump process timer resolution to 1ms so time.sleep() is
+            # actually granular instead of rounding up to the default ~15ms
+            try:
+                ctypes.WinDLL("winmm").timeBeginPeriod(1)
+            except Exception:
+                pass
+            # THREAD_PRIORITY_TIME_CRITICAL = 15
+            handle = ctypes.windll.kernel32.GetCurrentThread()
+            ctypes.windll.kernel32.SetThreadPriority(handle, 15)
+        except Exception:
+            pass
+
+    def _run(self, events, start_at, stop_flag):
+        self._boost_thread_priority()
+        try:
+            # wait until start
             while not stop_flag.is_set():
                 now = time.monotonic()
                 start = self._scheduled_start
-                if now >= start:
-                    break
                 wait = start - now
-                if wait > 0.005:
-                    time.sleep(wait - 0.003)
+                if wait <= 0:
+                    break
+                # sleep most of the way, leave a small tail to converge tightly
+                if wait > 0.002:
+                    time.sleep(wait - 0.001)
+                else:
+                    time.sleep(0.0005)
             if stop_flag.is_set():
                 return
             for offset, msg in events:
@@ -213,11 +238,17 @@ class MidiPlayer:
                 while not stop_flag.is_set():
                     now = time.monotonic()
                     target = self._scheduled_start + offset
-                    if now >= target:
-                        break
                     wait = target - now
-                    if wait > 0.003:
-                        time.sleep(wait - 0.002)
+                    if wait <= 0:
+                        break
+                    if wait > 0.002:
+                        # release the GIL so the asyncio loop / webui
+                        # thread can do their work without delaying us
+                        time.sleep(wait - 0.001)
+                    else:
+                        # sub-2ms tail: short sleep instead of busy-spin so
+                        # we don't hog the GIL between every single event
+                        time.sleep(0.0005)
                 if stop_flag.is_set():
                     break
                 self._emit(msg)

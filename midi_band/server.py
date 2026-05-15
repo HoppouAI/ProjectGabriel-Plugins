@@ -143,7 +143,14 @@ class BandServer:
                         "server_t": _now(),
                         "pos": pos,
                     })
-                    await self._broadcast(payload)
+                    # fire-and-forget: don't await drain, a slow peer must
+                    # never stall the asyncio loop and starve other tasks.
+                    # missing one tick is harmless, the next one will catch up.
+                    for w in list(self._peers.keys()):
+                        try:
+                            w.write(payload)
+                        except Exception:
+                            pass
                 except Exception as e:
                     logger.debug(f"midi_band: sync_broadcaster tick error: {e}")
         except asyncio.CancelledError:
