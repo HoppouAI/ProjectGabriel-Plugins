@@ -57,6 +57,7 @@ class BandClient:
         self._pending_track_names: List[str] = []
         self._pending_duration: float = 0.0
         self._last_rtt: float = 0.0
+        self._last_jitter: float = 0.0  # deviation of latest offset sample from smoothed
 
         # last assignments broadcast from host (everybody-on-the-band view)
         self._all_assignments: dict = {}
@@ -157,7 +158,7 @@ class BandClient:
                     self._writer.write(P.encode({
                         "type": P.PING,
                         "t": time.monotonic(),
-                        "client_offset": self._server_offset,
+                        "client_jitter": self._last_jitter,
                         "client_rtt": self._last_rtt,
                     }))
                     await self._writer.drain()
@@ -175,7 +176,7 @@ class BandClient:
                 self._writer.write(P.encode({
                     "type": P.PING,
                     "t": time.monotonic(),
-                    "client_offset": self._server_offset,
+                    "client_jitter": self._last_jitter,
                     "client_rtt": self._last_rtt,
                 }))
                 await self._writer.drain()
@@ -201,7 +202,9 @@ class BandClient:
                 offset = est - t_recv
                 if self._server_offset == 0.0:
                     self._server_offset = offset
+                    self._last_jitter = 0.0
                 else:
+                    self._last_jitter = offset - self._server_offset
                     self._server_offset = self._server_offset * 0.7 + offset * 0.3
             except Exception:
                 pass

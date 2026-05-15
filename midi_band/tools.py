@@ -198,10 +198,10 @@ class BandTools(BaseTool):
                 name="bandSyncStatus",
                 description=(
                     "Check how well every bandmate is locked to your clock. Reports each "
-                    "bandmate's clock offset (how far their clock drifted from yours, in "
-                    "milliseconds) and round-trip latency. Tight numbers (under ~30ms each) "
-                    "mean everyone will start a song together. Big or stale numbers mean a "
-                    "bandmate's connection is bad.\n"
+                    "bandmate's clock jitter (how much the per-sample clock estimate wobbles, "
+                    "in milliseconds) and round-trip latency. Tight numbers (jitter under 5ms, "
+                    "rtt under 30ms) mean everyone will start a song together. Big or stale "
+                    "numbers mean a bandmate's connection is bad.\n"
                     "**Invocation Condition:** Call when the user asks if the band is in sync, "
                     "asks about latency, or wonders if a specific bandmate is lagging. Host only."
                 ),

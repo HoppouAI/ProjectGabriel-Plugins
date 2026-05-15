@@ -36,7 +36,7 @@ class _Peer:
         self.ready_session: Optional[str] = None
         self.nack_reason: Optional[str] = None
         # most recent sync info reported by client in its PINGs
-        self.sync_offset: float = 0.0
+        self.sync_jitter: float = 0.0
         self.sync_rtt: float = 0.0
         self.sync_updated_at: float = 0.0
 
@@ -188,10 +188,10 @@ class BandServer:
                 pass
             peer = self._peers.get(writer)
             if peer is not None:
-                co = msg.get("client_offset")
+                cj = msg.get("client_jitter")
                 cr = msg.get("client_rtt")
-                if isinstance(co, (int, float)):
-                    peer.sync_offset = float(co)
+                if isinstance(cj, (int, float)):
+                    peer.sync_jitter = float(cj)
                 if isinstance(cr, (int, float)):
                     peer.sync_rtt = float(cr)
                 peer.sync_updated_at = _now()
@@ -539,7 +539,7 @@ class BandServer:
             age = now - peer.sync_updated_at if peer.sync_updated_at else None
             members.append({
                 "name": peer.name,
-                "offset_ms": round(peer.sync_offset * 1000.0, 2),
+                "jitter_ms": round(peer.sync_jitter * 1000.0, 2),
                 "rtt_ms": round(peer.sync_rtt * 1000.0, 2),
                 "age_seconds": round(age, 2) if age is not None else None,
                 "ready_session": peer.ready_session,

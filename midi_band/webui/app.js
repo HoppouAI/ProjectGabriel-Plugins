@@ -291,11 +291,11 @@ async function refreshAll() {
   await Promise.all([loadSongs(), refreshStatus()]);
 }
 
-function syncQuality(offsetMs, rttMs, age) {
+function syncQuality(jitterMs, rttMs, age) {
   if (age != null && age > 10) return "stale";
-  const o = Math.abs(offsetMs);
-  if (o < 15 && rttMs < 30) return "tight";
-  if (o < 40 && rttMs < 80) return "ok";
+  const j = Math.abs(jitterMs);
+  if (j < 5 && rttMs < 30) return "tight";
+  if (j < 15 && rttMs < 80) return "ok";
   return "loose";
 }
 
@@ -318,16 +318,16 @@ async function refreshSync() {
     syncListEl.innerHTML = `<li class="empty">no remote bandmates</li>`;
     return;
   }
-  const tight = members.filter((m) => syncQuality(m.offset_ms, m.rtt_ms, m.age_seconds) === "tight").length;
+  const tight = members.filter((m) => syncQuality(m.jitter_ms, m.rtt_ms, m.age_seconds) === "tight").length;
   syncSummaryEl.textContent = `${members.length} bandmate${members.length === 1 ? "" : "s"} \u00b7 ${tight} tight \u00b7 lead ${(s.lead_seconds || 0).toFixed(2)}s`;
   syncListEl.innerHTML = members
     .map((m) => {
-      const q = syncQuality(m.offset_ms, m.rtt_ms, m.age_seconds);
+      const q = syncQuality(m.jitter_ms, m.rtt_ms, m.age_seconds);
       const ageTxt = m.age_seconds == null ? "no data yet" : `${m.age_seconds.toFixed(1)}s ago`;
       return `<li class="sync-row q-${q}">
         <span class="sync-name">${escapeHtml(m.name)}</span>
         <span class="sync-stats">
-          <span><b>offset</b> ${m.offset_ms.toFixed(1)}ms</span>
+          <span><b>jitter</b> ${m.jitter_ms.toFixed(1)}ms</span>
           <span><b>rtt</b> ${m.rtt_ms.toFixed(1)}ms</span>
           <span class="dim">${ageTxt}</span>
           <span class="sync-pill q-${q}">${q}</span>
