@@ -125,6 +125,24 @@ def _download_windows(install_dir: Path) -> bool:
     return True
 
 
+def _appease_pyfluidsynth_hardcoded_path():
+    """pyfluidsynth's __init__.py unconditionally calls
+    os.add_dll_directory(r'C:\\tools\\fluidsynth\\bin') on Windows. If
+    that exact directory does not exist the import raises FileNotFoundError
+    before we get a chance to do anything. Make sure the path exists
+    (empty is fine, our own _add_dll_dir handles the actual library
+    location). No-op on non-Windows.
+    """
+    if platform.system() != "Windows":
+        return
+    try:
+        Path(r"C:\tools\fluidsynth\bin").mkdir(parents=True, exist_ok=True)
+    except Exception:
+        # might be permission denied on locked-down boxes, not fatal,
+        # the user can still install fluidsynth manually.
+        pass
+
+
 def ensure_fluidsynth(install_dir: Optional[Path], allow_download: bool = True) -> bool:
     """Make sure libfluidsynth is loadable.
 
@@ -137,6 +155,8 @@ def ensure_fluidsynth(install_dir: Optional[Path], allow_download: bool = True) 
     Returns True if the lib is reachable after this call. Safe to call
     repeatedly, becomes a no-op once it succeeds.
     """
+    _appease_pyfluidsynth_hardcoded_path()
+
     if _has_native():
         return True
 
