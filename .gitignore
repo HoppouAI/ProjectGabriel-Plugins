@@ -184,3 +184,10 @@ cython_debug/
 duo_song/config.yml
 mood/moods.json
 mood/emotions.json
+midi_band/config.yml
+midi_band/standalone/config.yml
+midi_band/standalone/vendor/
+midi_band/standalone/midi_cache/
+midi_band/standalone/.venv/
+midi_band/standalone/uv.lock
+*.sf2

@@ -1,0 +1,434 @@
+"""TCP server (host side) for the midi_band protocol.
+
+Owns the loaded song, the per-client track assignments, and the
+prepare/ready/play handshake. Runs the host's own playback locally for
+its share of tracks. No Project Gabriel imports so it works the same
+way under the plugin or any other harness.
+"""
+from __future__ import annotations
+
+import asyncio
+import logging
+import time
+import uuid
+from pathlib import Path
+from typing import Callable, Dict, List, Optional
+
+from . import midi_utils
+from . import protocol as P
+from .player import MidiPlayer
+
+logger = logging.getLogger(__name__)
+
+# bigger window than duo_song since we ship the full midi over the wire
+READY_TIMEOUT = 3.0
+
+
+def _now() -> float:
+    return time.monotonic()
+
+
+class _Peer:
+    def __init__(self, name: str, writer: asyncio.StreamWriter):
+        self.name = name
+        self.writer = writer
+        self.connected_at = _now()
+        self.ready_session: Optional[str] = None
+        self.nack_reason: Optional[str] = None
+
+
+class BandServer:
+    def __init__(
+        self,
+        bind: str,
+        port: int,
+        instance_name: str,
+        player: MidiPlayer,
+        library_dir: Path,
+        schedule_lead_seconds: float = 1.5,
+        on_change: Optional[Callable[[], None]] = None,
+    ):
+        self.bind = bind or "0.0.0.0"
+        self.port = int(port)
+        self.instance_name = instance_name or "gabriel"
+        self.player = player
+        self.library_dir = library_dir
+        self.lead = max(0.5, float(schedule_lead_seconds))
+        self.on_change = on_change or (lambda: None)
+
+        self._server: Optional[asyncio.AbstractServer] = None
+        self._peers: Dict[asyncio.StreamWriter, _Peer] = {}
+        self._stop = False
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._dispatch_lock: Optional[asyncio.Lock] = None
+
+        # currently loaded song state
+        self._loaded_song: Optional[str] = None
+        self._loaded_path: Optional[Path] = None
+        self._loaded_info: Optional[dict] = None
+        self._assignments: Dict[str, List[int]] = {}
+        self._host_tracks: List[int] = []
+
+    # ----- lifecycle -----
+
+    def start(self) -> bool:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            logger.warning("midi_band server: no running loop")
+            return False
+        self._loop = loop
+        self._stop = False
+        loop.create_task(self._serve())
+        return True
+
+    def stop(self):
+        self._stop = True
+        try:
+            self.player.stop_playback()
+        except Exception:
+            pass
+        if self._loop is not None and self._loop.is_running():
+            self._loop.call_soon_threadsafe(self._shutdown_async)
+
+    def _shutdown_async(self):
+        if self._server is not None:
+            try:
+                self._server.close()
+            except Exception:
+                pass
+        for w in list(self._peers.keys()):
+            try:
+                w.close()
+            except Exception:
+                pass
+        self._peers.clear()
+
+    # ----- networking -----
+
+    async def _serve(self):
+        try:
+            self._server = await asyncio.start_server(
+                self._handle_peer, self.bind, self.port, limit=P.READER_LIMIT
+            )
+            logger.info(f"midi_band: hosting on {self.bind}:{self.port}")
+            async with self._server:
+                await self._server.serve_forever()
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error(f"midi_band server crashed: {e}")
+
+    async def _handle_peer(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+        peer_addr = writer.get_extra_info("peername")
+        peer_name = f"{peer_addr}"
+        try:
+            line = await asyncio.wait_for(reader.readline(), timeout=10.0)
+            if not line:
+                writer.close()
+                return
+            try:
+                hello = P.decode(line)
+            except Exception:
+                writer.close()
+                return
+            if hello.get("type") != P.HELLO:
+                writer.close()
+                return
+            peer_name = str(hello.get("name") or peer_name)
+            self._peers[writer] = _Peer(peer_name, writer)
+            writer.write(P.encode({"type": P.WELCOME, "name": self.instance_name}))
+            await writer.drain()
+            logger.info(f"midi_band: peer joined: {peer_name}")
+            self.on_change()
+            # bring the new peer up to date on current assignments
+            if self._assignments or self._host_tracks:
+                try:
+                    writer.write(P.encode({
+                        "type": P.ASSIGNMENTS,
+                        "assignments": self._assignments_for_broadcast(),
+                    }))
+                    await writer.drain()
+                except Exception:
+                    pass
+            while not self._stop:
+                line = await reader.readline()
+                if not line:
+                    break
+                try:
+                    msg = P.decode(line)
+                except Exception:
+                    continue
+                await self._on_peer_msg(writer, msg)
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.warning(f"midi_band: peer {peer_name} dropped: {e}")
+        finally:
+            self._peers.pop(writer, None)
+            try:
+                writer.close()
+            except Exception:
+                pass
+            logger.info(f"midi_band: peer left: {peer_name}")
+            self.on_change()
+
+    async def _on_peer_msg(self, writer: asyncio.StreamWriter, msg: dict):
+        kind = msg.get("type")
+        if kind == P.PING:
+            t_in = msg.get("t")
+            writer.write(P.encode({"type": P.PONG, "t_in": t_in, "server_t": _now()}))
+            try:
+                await writer.drain()
+            except Exception:
+                pass
+            return
+        if kind == P.READY:
+            peer = self._peers.get(writer)
+            if peer is not None:
+                peer.ready_session = str(msg.get("session") or "")
+                peer.nack_reason = None
+            return
+        if kind == P.NACK:
+            peer = self._peers.get(writer)
+            if peer is not None:
+                peer.ready_session = str(msg.get("session") or "")
+                peer.nack_reason = str(msg.get("reason") or "declined")
+                logger.warning(f"midi_band: '{peer.name}' nack: {peer.nack_reason}")
+            return
+
+    async def _broadcast(self, payload: bytes):
+        dead: List[asyncio.StreamWriter] = []
+        for w in list(self._peers.keys()):
+            try:
+                w.write(payload)
+                await w.drain()
+            except Exception:
+                dead.append(w)
+        for w in dead:
+            self._peers.pop(w, None)
+            try:
+                w.close()
+            except Exception:
+                pass
+
+    # ----- public host API used by tools -----
+
+    def list_songs(self) -> List[str]:
+        return midi_utils.list_midi_files(self.library_dir)
+
+    def list_clients(self) -> List[str]:
+        return [p.name for p in self._peers.values()]
+
+    def loaded_info(self) -> dict:
+        if not self._loaded_info:
+            return {
+                "song": None, "tracks": [], "duration": 0.0,
+                "assignments": {}, "host_tracks": [],
+            }
+        return {
+            "song": self._loaded_song,
+            "tracks": self._loaded_info["tracks"],
+            "duration": self._loaded_info["duration"],
+            "assignments": dict(self._assignments),
+            "host_tracks": list(self._host_tracks),
+        }
+
+    def load_song(self, query: str) -> dict:
+        path = midi_utils.find_midi(self.library_dir, query)
+        if path is None:
+            return {"result": "error", "message": f"no midi matching '{query}'"}
+        try:
+            data = path.read_bytes()
+            info = midi_utils.parse_tracks(data)
+        except Exception as e:
+            return {"result": "error", "message": f"failed to parse midi: {e}"}
+        self._loaded_song = path.name
+        self._loaded_path = path
+        self._loaded_info = info
+        # assignments dont survive a song change, force re-assignment
+        self._assignments = {}
+        self._host_tracks = []
+        return {
+            "result": "ok",
+            "song": path.name,
+            "duration": info["duration"],
+            "tracks": info["tracks"],
+            "instruction": (
+                "Now assign tracks to bandmates with assignBandTracks or call "
+                "autoAssignBandTracks for an automatic split, then call startMidiBand."
+            ),
+        }
+
+    def assign_tracks(self, host_tracks: List[int],
+                      client_assignments: Dict[str, List[int]]) -> dict:
+        if not self._loaded_info:
+            return {"result": "error", "message": "no song loaded, call loadMidiSong first"}
+        max_idx = len(self._loaded_info["tracks"])
+
+        def clean(lst):
+            out = []
+            for x in lst or []:
+                try:
+                    i = int(x)
+                except Exception:
+                    continue
+                if 0 <= i < max_idx and i not in out:
+                    out.append(i)
+            return out
+
+        self._host_tracks = clean(host_tracks)
+        self._assignments = {}
+        for k, v in (client_assignments or {}).items():
+            cleaned = clean(v)
+            if cleaned:
+                self._assignments[str(k)] = cleaned
+
+        if self._loop is not None and self._loop.is_running():
+            self._loop.create_task(self._broadcast_assignments())
+        self.on_change()
+        return {
+            "result": "ok",
+            "host_tracks": self._host_tracks,
+            "assignments": self._assignments,
+            "broadcast_view": self._assignments_for_broadcast(),
+        }
+
+    def auto_assign(self) -> dict:
+        if not self._loaded_info:
+            return {"result": "error", "message": "no song loaded"}
+        playable = [t["index"] for t in self._loaded_info["tracks"] if t["note_count"] > 0]
+        if not playable:
+            return {"result": "error", "message": "this midi has no playable tracks"}
+        members = [self.instance_name] + [p.name for p in self._peers.values()]
+        if not members:
+            return {"result": "error", "message": "no band members"}
+        bucket: Dict[str, List[int]] = {m: [] for m in members}
+        for i, ti in enumerate(playable):
+            bucket[members[i % len(members)]].append(ti)
+        host_tracks = bucket.pop(self.instance_name, [])
+        return self.assign_tracks(host_tracks, bucket)
+
+    def _assignments_for_broadcast(self) -> dict:
+        if not self._loaded_info:
+            return {}
+        tracks = self._loaded_info["tracks"]
+
+        def names_for(idxs):
+            return [tracks[i]["name"] for i in idxs if 0 <= i < len(tracks)]
+
+        out = {self.instance_name: names_for(self._host_tracks)}
+        for name, idxs in self._assignments.items():
+            out[name] = names_for(idxs)
+        return out
+
+    async def _broadcast_assignments(self):
+        msg = P.encode({
+            "type": P.ASSIGNMENTS,
+            "assignments": self._assignments_for_broadcast(),
+        })
+        await self._broadcast(msg)
+
+    async def start_playback(self) -> dict:
+        if self._dispatch_lock is None:
+            self._dispatch_lock = asyncio.Lock()
+        async with self._dispatch_lock:
+            return await self._start_playback_locked()
+
+    async def _start_playback_locked(self) -> dict:
+        if not self._loaded_info or self._loaded_path is None:
+            return {"result": "error", "message": "no song loaded"}
+
+        # if nothing was assigned at all, default to host playing every
+        # playable track (solo mode)
+        if not self._assignments and not self._host_tracks:
+            self._host_tracks = [t["index"] for t in self._loaded_info["tracks"] if t["note_count"] > 0]
+
+        session = uuid.uuid4().hex[:12]
+        try:
+            file_bytes = self._loaded_path.read_bytes()
+        except Exception as e:
+            return {"result": "error", "message": f"failed to read midi: {e}"}
+        file_b64 = midi_utils.load_midi_b64(self._loaded_path)
+        duration = self._loaded_info["duration"]
+        track_info = self._loaded_info["tracks"]
+
+        # phase 1: send each peer their personal prepare with only their tracks
+        peers_at_prepare = list(self._peers.values())
+        for p in peers_at_prepare:
+            p.ready_session = None
+            p.nack_reason = None
+
+        for peer in peers_at_prepare:
+            tracks = self._assignments.get(peer.name, [])
+            track_names = [track_info[i]["name"] for i in tracks if 0 <= i < len(track_info)]
+            try:
+                peer.writer.write(P.encode({
+                    "type": P.PREPARE,
+                    "session": session,
+                    "song": self._loaded_song,
+                    "file_b64": file_b64,
+                    "tracks": tracks,
+                    "track_names": track_names,
+                    "duration": duration,
+                }))
+                await peer.writer.drain()
+            except Exception as e:
+                logger.warning(f"midi_band: prepare to {peer.name} failed: {e}")
+                peer.nack_reason = "send failed"
+                peer.ready_session = session
+
+        # phase 2: wait for everyone to ack
+        if peers_at_prepare:
+            deadline = _now() + READY_TIMEOUT
+            while _now() < deadline:
+                pending = sum(1 for p in peers_at_prepare if p.ready_session != session)
+                if pending == 0:
+                    break
+                await asyncio.sleep(0.05)
+
+        ready_count = sum(
+            1 for p in peers_at_prepare
+            if p.ready_session == session and p.nack_reason is None
+        )
+        nacks = [
+            f"{p.name}: {p.nack_reason}"
+            for p in peers_at_prepare if p.nack_reason
+        ]
+
+        # phase 3: pick start time and broadcast play
+        start_at = _now() + self.lead
+        play_msg = P.encode({
+            "type": P.PLAY,
+            "session": session,
+            "start_at_server_t": start_at,
+        })
+        await self._broadcast(play_msg)
+
+        # also schedule local host playback
+        host_tracks = self._host_tracks
+        host_track_names = [track_info[i]["name"] for i in host_tracks if 0 <= i < len(track_info)]
+        if host_tracks:
+            events = midi_utils.expand_track_events(file_bytes, host_tracks)
+            self.player.schedule(events, start_at, self._loaded_song,
+                                 host_track_names, duration)
+        self.on_change()
+        return {
+            "result": "ok",
+            "session": session,
+            "song": self._loaded_song,
+            "starts_in_seconds": round(self.lead, 2),
+            "host_tracks": host_track_names,
+            "peers_total": len(peers_at_prepare),
+            "peers_ready": ready_count,
+            "peers_nack": nacks,
+        }
+
+    async def stop_playback(self) -> dict:
+        try:
+            self.player.stop_playback()
+        except Exception:
+            pass
+        await self._broadcast(P.encode({"type": P.STOP}))
+        self.on_change()
+        return {"result": "ok"}

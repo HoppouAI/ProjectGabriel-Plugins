@@ -1,0 +1,61 @@
+# midi_band local config. Copy this file to config.yml in the same folder
+# and edit the values. Anything you set here OVERRIDES whatever is in the
+# host's main config.yml under plugins.midi_band.*. Anything you leave
+# blank falls through to the main config (or built-in defaults).
+
+# 'host' or 'client'.
+# - host: this instance runs the band server, owns the song library and
+#   the AI tools that pick songs / assign tracks / start playback. Also
+#   plays back its own assigned tracks.
+# - client: this instance connects to a host and only plays the tracks
+#   the host hands it. The AI tools on a client are status-only.
+role: host
+
+# Friendly label your bandmates see in logs and assignments.
+instance_name: gabriel_a
+
+# host only, network interface to bind on. 0.0.0.0 = all NICs.
+bind: 0.0.0.0
+
+# client only, where to dial the host (its LAN IP).
+host_address: 192.168.1.50
+
+# TCP port. Must match on every band member.
+port: 8766
+
+# Path to the .sf2 soundfont fluidsynth uses to synthesize notes. Required.
+# Pick anything you have, GeneralUser GS / FluidR3_GM / Arachno are good
+# free defaults.
+soundfont: "sfx/soundfonts/default.sf2"
+
+# Library of .mid / .midi files. Host only really uses this. Clients
+# receive the file from the host on demand and cache it under
+# data/plugins/midi_band/received/.
+# Default (when blank): the plugin's own midi/ subfolder, ie
+# plugins/midi_band/midi/. Drop your .mid files there for the easiest
+# setup.
+library_dir: ""
+
+# Synth output gain 0.0 - 2.0.
+synth_gain: 0.5
+
+# fluidsynth audio driver. Blank = autodetect.
+# windows: "dsound" or "wasapi"
+# linux:   "alsa" or "pulseaudio" or "pipewire"
+# mac:     "coreaudio"
+audio_driver: ""
+
+# How far in the future the host commits the start time once everyone
+# has acked ready. Bigger = more sync slack on slow LANs, smaller =
+# snappier downbeat. The full prepare/ready handshake adds up to ~3s
+# extra on top of this for the file transfer + ack window.
+schedule_lead_seconds: 1.5
+
+# Lower number = higher priority in the chatbox.
+chatbox_priority: 25
+
+# On Windows, if libfluidsynth-3.dll cant be found on the system the
+# plugin will download the latest official build from the FluidSynth
+# GitHub releases and extract it under data/plugins/midi_band/fluidsynth/.
+# Set to false to disable that and require a system install.
+auto_install_fluidsynth: true

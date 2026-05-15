@@ -122,6 +122,23 @@ ping/pong clock sync (typical drift under ~30ms on a quiet LAN).
 - Tools: `startDuoSong`, `stopDuoSong`, `listDuoSongs`, `duoStatus`
 - Requires: `pygame>=2.5`
 
+### [`midi_band/`](midi_band/) -- Multi-instance MIDI band
+
+Turns a group of Gabriel instances on the same LAN into a live band.
+The host loads a MIDI file, assigns tracks to bandmates (drums to one,
+bass to another, lead to itself, etc), and on `startMidiBand` every
+bandmate plays their assigned tracks at the exact same moment via
+fluidsynth + a soundfont. A standalone client ships in the same folder
+so non-Gabriel users can join the band too.
+
+- Synthesis: `pyfluidsynth` + a `.sf2` soundfont (per machine)
+- Library: `sfx/midi/` on the host, clients receive files on demand
+- Tools: `listMidiSongs`, `loadMidiSong`, `listBandMembers`,
+  `autoAssignBandTracks`, `assignBandTracks`, `startMidiBand`,
+  `stopMidiBand`, `bandStatus`
+- Standalone client: see [`midi_band/standalone/`](midi_band/standalone/) (uv / pip)
+- Requires: `mido>=1.3`, `pyfluidsynth>=1.3`, native fluidsynth library
+
 ### [`example_hello/`](example_hello/) -- Reference plugin
 
 Minimal demo. Registers a `sayHello` tool and hooks `startup` / `shutdown`

@@ -1,0 +1,28 @@
+# midi_band standalone client config. Copy this file to config.yml in
+# the same folder and edit the values. Anything you set here is used as
+# the default when running standalone_client.py without that arg. CLI
+# args always override config values.
+#
+# Run with no args to use everything from this file:
+#     uv run standalone_client.py
+
+# Required: host you want to connect to.
+host: "192.168.1.50"
+
+# Optional: defaults to 8766 (the midi_band default port).
+port: 8766
+
+# Required: your bandmate name. Shows up in listBandMembers on the host.
+name: "drummer"
+
+# Required: path to a .sf2 soundfont. Use the same one as the host if
+# you want identical tone.
+soundfont: "C:/sf2/GeneralUser.sf2"
+
+# Optional knobs.
+gain: 0.5
+driver: ""               # blank = autodetect. dsound / wasapi / alsa / coreaudio / ...
+cache_dir: "midi_cache"  # MIDI files received from the host land here
+fluidsynth_dir: "vendor/fluidsynth"
+auto_install_fluidsynth: true
+log_level: "INFO"
