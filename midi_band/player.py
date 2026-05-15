@@ -126,6 +126,35 @@ class MidiPlayer:
                 self._fs = None
                 return False
 
+    def warmup(self) -> bool:
+        # forces fluidsynth init + soundfont load so the first real play
+        # doesnt eat the latency of doing it then.
+        return self._ensure_synth()
+
+    def schedule_ticks(self, ticks, start_at_local: float, label: str = "soundcheck",
+                       duration: float = 10.0) -> bool:
+        # ticks: iterable of (offset_seconds, note, channel, velocity, length).
+        # builds synthetic mido note_on/note_off events and reuses schedule().
+        try:
+            import mido
+        except Exception as e:
+            logger.error(f"midi_band: mido missing for soundcheck: {e}")
+            return False
+        events = []
+        for tk in ticks:
+            try:
+                offset, note, channel, velocity, length = tk
+            except Exception:
+                continue
+            on = mido.Message("note_on", channel=int(channel),
+                              note=int(note), velocity=int(velocity))
+            off = mido.Message("note_off", channel=int(channel),
+                               note=int(note), velocity=0)
+            events.append((float(offset), on))
+            events.append((float(offset) + max(0.05, float(length)), off))
+        events.sort(key=lambda e: e[0])
+        return self.schedule(events, start_at_local, label, [label], duration)
+
     def schedule(self, events, start_at_local: float, song: str,
                  track_names: List[str], duration: float) -> bool:
         if not self._ensure_synth():

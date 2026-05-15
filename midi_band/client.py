@@ -204,6 +204,9 @@ class BandClient:
             self.player.stop_playback()
             self.on_change()
             return
+        if kind == P.SOUNDCHECK:
+            await self._handle_soundcheck(msg)
+            return
         if kind == P.ASSIGNMENTS:
             self._all_assignments = dict(msg.get("assignments") or {})
             self.on_change()
@@ -283,4 +286,23 @@ class BandClient:
             events, local_start, self._pending_song,
             self._pending_track_names, self._pending_duration,
         )
+        self.on_change()
+
+    async def _handle_soundcheck(self, msg: dict):
+        ticks = list(msg.get("ticks") or [])
+        duration = float(msg.get("duration") or 10.0)
+        start_at_server = float(msg.get("start_at_server_t") or 0.0)
+        local_start = start_at_server - self._server_offset
+        # quick offset refresh so the lead stays accurate
+        await self._ping_burst()
+        local_start = start_at_server - self._server_offset
+        if not ticks:
+            # no ticks for us this round, still warm the synth so the next
+            # song starts instantly
+            try:
+                self.player.warmup()
+            except Exception:
+                pass
+            return
+        self.player.schedule_ticks(ticks, local_start, "soundcheck", duration)
         self.on_change()

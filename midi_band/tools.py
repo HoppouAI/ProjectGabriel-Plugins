@@ -119,6 +119,31 @@ class BandTools(BaseTool):
                 parameters={"type": "OBJECT", "properties": {}},
             ),
             types.FunctionDeclaration(
+                name="bandSoundcheck",
+                description=(
+                    "Quick sync check: every bandmate plays a short percussive tick on alternating "
+                    "beats for a few seconds, like a click track passed around the room. Useful "
+                    "before a real performance to confirm everyone is in time and to wake up "
+                    "their instruments so the first song starts crisp.\n"
+                    "**Invocation Condition:** Call when the user asks to test the band, hear if "
+                    "everyone is in sync, or warm up. Don't call right before startMidiBand on the "
+                    "same beat, give it a moment to finish first."
+                ),
+                parameters={
+                    "type": "OBJECT",
+                    "properties": {
+                        "duration_seconds": {
+                            "type": "NUMBER",
+                            "description": "How long the soundcheck runs. Default 10. Keep it under 30.",
+                        },
+                        "bpm": {
+                            "type": "NUMBER",
+                            "description": "Tempo of the click. Default 120.",
+                        },
+                    },
+                },
+            ),
+            types.FunctionDeclaration(
                 name="bandStatus",
                 description=(
                     "Check what the band is doing right now: loaded song, who is connected, what "
@@ -181,6 +206,18 @@ class BandTools(BaseTool):
             return await srv.start_playback()
         if name == "stopMidiBand":
             return await srv.stop_playback()
+        if name == "bandSoundcheck":
+            try:
+                dur = float(args.get("duration_seconds") or 10.0)
+            except Exception:
+                dur = 10.0
+            try:
+                bpm = float(args.get("bpm") or 120.0)
+            except Exception:
+                bpm = 120.0
+            dur = max(2.0, min(30.0, dur))
+            bpm = max(40.0, min(240.0, bpm))
+            return await srv.soundcheck(duration=dur, bpm=bpm)
         return None
 
 

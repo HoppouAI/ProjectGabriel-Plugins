@@ -20,6 +20,7 @@ NACK = "nack"
 PLAY = "play"
 STOP = "stop"
 ASSIGNMENTS = "assignments"
+SOUNDCHECK = "soundcheck"
 ERROR = "error"
 
 

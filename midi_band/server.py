@@ -424,6 +424,61 @@ class BandServer:
             "peers_nack": nacks,
         }
 
+    async def soundcheck(self, duration: float = 10.0, bpm: float = 120.0) -> dict:
+        # synth-only sync test: each band member plays a percussion note on
+        # alternating beats at given bpm, for `duration` seconds. doubles as
+        # a fluidsynth + soundfont warmup so the first real song is snappy.
+        beat_sec = 60.0 / max(30.0, float(bpm))
+        total_beats = max(2, int(float(duration) / beat_sec))
+
+        members = [self.instance_name] + [p.name for p in self._peers.values()]
+        if not members:
+            return {"result": "error", "message": "no band members"}
+
+        # GM percussion notes on channel 9, distinct timbres per slot
+        palette = [76, 77, 56, 81, 80, 75, 60, 61, 62, 63]
+
+        plan: Dict[str, list] = {m: [] for m in members}
+        for b in range(total_beats):
+            slot = b % len(members)
+            who = members[slot]
+            note = palette[slot % len(palette)]
+            plan[who].append([b * beat_sec, note, 9, 110, 0.12])
+
+        session = uuid.uuid4().hex[:12]
+        start_at = _now() + self.lead
+
+        for peer in list(self._peers.values()):
+            ticks = plan.get(peer.name) or []
+            try:
+                peer.writer.write(P.encode({
+                    "type": P.SOUNDCHECK,
+                    "session": session,
+                    "start_at_server_t": start_at,
+                    "ticks": ticks,
+                    "duration": float(duration),
+                    "bpm": float(bpm),
+                }))
+                await peer.writer.drain()
+            except Exception as e:
+                logger.warning(f"midi_band: soundcheck send to {peer.name} failed: {e}")
+
+        host_ticks = plan.get(self.instance_name) or []
+        if host_ticks:
+            self.player.schedule_ticks(host_ticks, start_at, "soundcheck", float(duration))
+
+        self.on_change()
+        return {
+            "result": "ok",
+            "session": session,
+            "starts_in_seconds": round(self.lead, 2),
+            "duration": float(duration),
+            "bpm": float(bpm),
+            "members": members,
+            "host_ticks": len(host_ticks),
+            "peer_ticks": {n: len(plan[n]) for n in members if n != self.instance_name},
+        }
+
     async def stop_playback(self) -> dict:
         try:
             self.player.stop_playback()
