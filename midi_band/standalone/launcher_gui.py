@@ -285,6 +285,7 @@ class BandmateCard(ctk.CTkFrame):
     def stop(self):
         if not self.is_running():
             return
+        self._stopping = True
         try:
             if sys.platform.startswith("win"):
                 self.proc.terminate()
@@ -303,28 +304,48 @@ class BandmateCard(ctk.CTkFrame):
         log.info(f"stopped bandmate '{self.name_var.get()}'")
 
     def _set_running(self, on: bool, status: str):
-        self.status_var.set(status)
-        if on:
-            self.dot.configure(text_color=COL_GREEN_HI)
-            self.btn.configure(text="Stop", fg_color=COL_RED, hover_color=COL_RED_HI)
-        else:
-            self.dot.configure(text_color=COL_TEXT_DIM)
-            self.btn.configure(text="Start", fg_color=COL_GREEN, hover_color=COL_GREEN_HI)
+        try:
+            self.status_var.set(status)
+            if on:
+                self.dot.configure(text_color=COL_GREEN_HI)
+                self.btn.configure(text="Stop", fg_color=COL_RED, hover_color=COL_RED_HI)
+            else:
+                self.dot.configure(text_color=COL_TEXT_DIM)
+                self.btn.configure(text="Start", fg_color=COL_GREEN, hover_color=COL_GREEN_HI)
+        except Exception:
+            # widget already destroyed, ignore
+            pass
 
     def _monitor(self):
         if self.proc is None:
             return
         rc = self.proc.wait()
-        # update from the tk thread
-        self.after(0, lambda: self._on_exit(rc))
+        try:
+            self.after(0, lambda: self._on_exit(rc))
+        except Exception:
+            # tk root or this widget gone, nothing to update
+            pass
 
     def _on_exit(self, rc: int):
-        if rc == 0:
-            self._set_running(False, "stopped")
-        else:
-            self.status_var.set(f"exited ({rc})")
-            self.dot.configure(text_color=COL_YELLOW)
-            self.btn.configure(text="Start", fg_color=COL_GREEN, hover_color=COL_GREEN_HI)
+        # if we exited because the user pressed Stop, don't override the
+        # already-set "stopped" status with "exited (1)".
+        if getattr(self, "_stopping", False):
+            self._stopping = False
+            return
+        try:
+            if not self.winfo_exists():
+                return
+        except Exception:
+            return
+        try:
+            if rc == 0:
+                self._set_running(False, "stopped")
+            else:
+                self.status_var.set(f"exited ({rc})")
+                self.dot.configure(text_color=COL_YELLOW)
+                self.btn.configure(text="Start", fg_color=COL_GREEN, hover_color=COL_GREEN_HI)
+        except Exception:
+            pass
 
 
 class LauncherApp(ctk.CTk):
