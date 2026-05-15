@@ -116,12 +116,34 @@ class BandServer:
                 self._handle_peer, self.bind, self.port, limit=P.READER_LIMIT
             )
             logger.info(f"midi_band: hosting on {self.bind}:{self.port}")
+            asyncio.create_task(self._sync_broadcaster())
             async with self._server:
                 await self._server.serve_forever()
         except asyncio.CancelledError:
             pass
         except Exception as e:
             logger.error(f"midi_band server crashed: {e}")
+
+    async def _sync_broadcaster(self):
+        # while the player is producing audio, broadcast our authoritative
+        # clock + playback position once a second so clients can correct drift.
+        try:
+            while not self._stop:
+                await asyncio.sleep(1.0)
+                try:
+                    if not self.player.is_playing():
+                        continue
+                    pos = self.player.current_position()
+                    payload = P.encode({
+                        "type": P.SYNC_TICK,
+                        "server_t": _now(),
+                        "pos": pos,
+                    })
+                    await self._broadcast(payload)
+                except Exception as e:
+                    logger.debug(f"midi_band: sync_broadcaster tick error: {e}")
+        except asyncio.CancelledError:
+            pass
 
     async def _handle_peer(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         peer_addr = writer.get_extra_info("peername")

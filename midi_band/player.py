@@ -195,9 +195,10 @@ class MidiPlayer:
             # wait until start, mixed sleep + busy-wait for tight timing
             while not stop_flag.is_set():
                 now = time.monotonic()
-                if now >= start_at:
+                start = self._scheduled_start
+                if now >= start:
                     break
-                wait = start_at - now
+                wait = start - now
                 if wait > 0.005:
                     time.sleep(wait - 0.003)
             if stop_flag.is_set():
@@ -205,9 +206,9 @@ class MidiPlayer:
             for offset, msg in events:
                 if stop_flag.is_set():
                     break
-                target = start_at + offset
                 while not stop_flag.is_set():
                     now = time.monotonic()
+                    target = self._scheduled_start + offset
                     if now >= target:
                         break
                     wait = target - now
@@ -223,6 +224,18 @@ class MidiPlayer:
                 self._all_notes_off()
             except Exception:
                 pass
+
+    def nudge(self, delta_seconds: float) -> None:
+        """Shift scheduled_start by delta. Negative = catch up (events fire sooner),
+        positive = slow down (events fire later)."""
+        with self._lock:
+            self._scheduled_start += float(delta_seconds)
+
+    def current_position(self) -> float:
+        """Where the playhead is right now in song-relative seconds. 0 if not playing."""
+        if not self.is_playing():
+            return self._paused_offset if self._is_paused else 0.0
+        return max(0.0, time.monotonic() - self._scheduled_start)
 
     def _emit(self, msg):
         fs = self._fs
@@ -356,6 +369,30 @@ class MidiPlayer:
             self._thread.start()
         logger.info(f"midi_band: resumed '{song}' from {offset:.2f}s")
         return True
+
+    def seek_to(self, target_seconds: float, start_at_local: Optional[float] = None) -> bool:
+        """Hard re-seek mid-playback to target_seconds and resume immediately.
+        Used by the client's drift-correction when the smooth nudge isn't enough."""
+        if not self._last_events:
+            return False
+        if start_at_local is None:
+            start_at_local = time.monotonic()
+        offset = max(0.0, float(target_seconds))
+        # snapshot what stop_playback is about to wipe
+        with self._lock:
+            saved_events = list(self._last_events)
+            saved_song = self._current_song
+            saved_tracks = list(self._current_tracks)
+            saved_orig_dur = self._last_song_orig_duration
+        self.stop_playback()
+        with self._lock:
+            self._last_events = saved_events
+            self._current_song = saved_song
+            self._current_tracks = saved_tracks
+            self._last_song_orig_duration = saved_orig_dur
+            self._is_paused = True
+            self._paused_offset = offset
+        return self.resume(start_at_local)
 
     def set_gain(self, gain: float) -> float:
         g = max(0.0, min(2.0, float(gain)))

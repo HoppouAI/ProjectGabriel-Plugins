@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import collections
 import logging
 import time
 from pathlib import Path
@@ -23,6 +24,12 @@ PING_INTERVAL = 4.0
 RECONNECT_BACKOFF_MAX = 30.0
 PING_BURST_COUNT = 4
 PING_BURST_GAP = 0.05
+SYNC_SAMPLE_WINDOW = 16  # NTP-style minimum filter window
+SYNC_LOCK_SAMPLES = 4    # take best directly until we have this many samples
+SYNC_CREEP_PER_SAMPLE = 0.005  # max 5ms shift per pong once locked
+SYNC_NUDGE_THRESHOLD_S = 0.020  # ignore drift below 20ms
+SYNC_NUDGE_MAX_PER_TICK = 0.040 # never shift playhead more than 40ms per tick
+SYNC_HARD_JUMP_THRESHOLD_S = 0.500  # over half a second drift = hard reseek
 
 
 class BandClient:
@@ -58,6 +65,7 @@ class BandClient:
         self._pending_duration: float = 0.0
         self._last_rtt: float = 0.0
         self._last_jitter: float = 0.0  # deviation of latest offset sample from smoothed
+        self._sync_samples: collections.deque = collections.deque(maxlen=SYNC_SAMPLE_WINDOW)
 
         # last assignments broadcast from host (everybody-on-the-band view)
         self._all_assignments: dict = {}
@@ -199,13 +207,23 @@ class BandClient:
                 rtt = t_recv - t_sent
                 self._last_rtt = rtt
                 est = server_t + rtt * 0.5
-                offset = est - t_recv
-                if self._server_offset == 0.0:
-                    self._server_offset = offset
-                    self._last_jitter = 0.0
+                offset_sample = est - t_recv
+                self._sync_samples.append((rtt, offset_sample))
+                # NTP-style "minimum filter": pick the sample with lowest RTT,
+                # because that one had the most symmetric path so its
+                # offset estimate is the most trustworthy.
+                best_rtt, best_offset = min(self._sync_samples, key=lambda s: s[0])
+                if len(self._sync_samples) <= SYNC_LOCK_SAMPLES:
+                    new_offset = best_offset
                 else:
-                    self._last_jitter = offset - self._server_offset
-                    self._server_offset = self._server_offset * 0.7 + offset * 0.3
+                    delta = best_offset - self._server_offset
+                    if delta > SYNC_CREEP_PER_SAMPLE:
+                        delta = SYNC_CREEP_PER_SAMPLE
+                    elif delta < -SYNC_CREEP_PER_SAMPLE:
+                        delta = -SYNC_CREEP_PER_SAMPLE
+                    new_offset = self._server_offset + delta
+                self._last_jitter = offset_sample - best_offset
+                self._server_offset = new_offset
             except Exception:
                 pass
             return
@@ -242,6 +260,9 @@ class BandClient:
                 pass
             self.on_change()
             return
+        if kind == P.SYNC_TICK:
+            self._handle_sync_tick(msg)
+            return
         if kind == P.SOUNDCHECK:
             await self._handle_soundcheck(msg)
             return
@@ -251,6 +272,41 @@ class BandClient:
             return
         if kind == P.ERROR:
             logger.warning(f"midi_band: server error: {msg.get('message')}")
+
+    def _handle_sync_tick(self, msg: dict):
+        if not self.player.is_playing():
+            return
+        try:
+            server_t = float(msg.get("server_t"))
+            server_pos = float(msg.get("pos"))
+        except Exception:
+            return
+        # what does the server think the song position is right at this exact local instant?
+        local_now = time.monotonic()
+        server_now = local_now + self._server_offset
+        expected_pos = server_pos + (server_now - server_t)
+        actual_pos = self.player.current_position()
+        drift = expected_pos - actual_pos  # positive => we're behind
+        ad = abs(drift)
+        if ad < SYNC_NUDGE_THRESHOLD_S:
+            return
+        if ad >= SYNC_HARD_JUMP_THRESHOLD_S:
+            # too far gone for a smooth nudge, hard re-seek to the server's
+            # current position immediately. Restart playback from there.
+            try:
+                self.player.seek_to(expected_pos, start_at_local=local_now)
+                logger.info(f"midi_band: hard re-sync, jumped {drift*1000:.0f}ms")
+            except Exception as e:
+                logger.warning(f"midi_band: hard re-sync failed: {e}")
+            return
+        # smooth nudge: move scheduled_start in the right direction, capped
+        # so we never make it audible (40ms per tick max).
+        step = max(-SYNC_NUDGE_MAX_PER_TICK, min(SYNC_NUDGE_MAX_PER_TICK, drift))
+        # if we're behind (drift > 0), shift scheduled_start EARLIER => events fire sooner
+        try:
+            self.player.nudge(-step)
+        except Exception:
+            pass
 
     async def _handle_prepare(self, msg: dict):
         session = str(msg.get("session") or "")
