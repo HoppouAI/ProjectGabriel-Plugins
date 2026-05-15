@@ -73,7 +73,7 @@ HERE = Path(__file__).resolve().parent
 ROSTER_PATH = HERE / "bandmates.yml"
 CLIENT_PATH = HERE / "standalone_client.py"
 
-DEFAULT_DRIVER = "dsound" if sys.platform.startswith("win") else ""
+DEFAULT_DRIVER = "wasapi" if sys.platform.startswith("win") else ""
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("launcher")
@@ -98,13 +98,29 @@ def list_output_devices() -> List[str]:
     if _sd is None:
         return []
     try:
+        # filter to WASAPI host api on windows so device names match
+        # what fluidsynth's wasapi driver enumerates. otherwise the names
+        # come from MME/portaudio and fluidsynth rejects them silently
+        # and falls back to the default device.
+        wasapi_idx = None
+        if sys.platform.startswith("win"):
+            try:
+                for i, api in enumerate(_sd.query_hostapis()):
+                    if "wasapi" in str(api.get("name", "")).lower():
+                        wasapi_idx = i
+                        break
+            except Exception:
+                pass
         devs = _sd.query_devices()
         out: List[str] = []
         for d in devs:
-            if d.get("max_output_channels", 0) > 0:
-                name = d.get("name") or ""
-                if name and name not in out:
-                    out.append(name)
+            if d.get("max_output_channels", 0) <= 0:
+                continue
+            if wasapi_idx is not None and d.get("hostapi") != wasapi_idx:
+                continue
+            name = d.get("name") or ""
+            if name and name not in out:
+                out.append(name)
         return out
     except Exception as e:
         log.warning(f"could not enumerate audio devices: {e}")

@@ -118,7 +118,16 @@ class MidiPlayer:
                 # different sinks instead of all stacking on the default.
                 if drv and self.device:
                     try:
-                        self._fs.setting(f"audio.{drv}.device", str(self.device))
+                        ok = self._fs.setting(f"audio.{drv}.device", str(self.device))
+                        if ok is False:
+                            logger.warning(
+                                f"midi_band: fluidsynth REJECTED audio.{drv}.device='{self.device}'. "
+                                f"the {drv} driver couldn't find a device with that name, falling back "
+                                f"to the system default. run 'standalone_client.py --list-devices' to "
+                                f"see the exact names this machine accepts."
+                            )
+                        else:
+                            logger.info(f"midi_band: fluidsynth opening audio.{drv}.device='{self.device}'")
                     except Exception as e:
                         logger.warning(f"midi_band: could not set audio.{drv}.device='{self.device}': {e}")
                 if drv:
