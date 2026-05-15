@@ -266,6 +266,8 @@ class _Handler(BaseHTTPRequestHandler):
                 "playing": ps.get("playing"),
                 "paused": ps.get("paused"),
                 "gain": ps.get("gain"),
+                "in_count_in": ps.get("in_count_in"),
+                "count_in_remaining": ps.get("count_in_remaining"),
                 "members": [srv.instance_name] + srv.list_clients(),
             })
         except Exception as e:

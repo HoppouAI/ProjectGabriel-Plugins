@@ -455,7 +455,8 @@ class BandServer:
                 events, self.count_in_beats, self.count_in_bpm
             )
             self.player.schedule(events, start_at, self._loaded_song,
-                                 host_track_names, duration + count_in_lead)
+                                 host_track_names, duration + count_in_lead,
+                                 count_in_lead=count_in_lead)
         self.on_change()
         return {
             "result": "ok",

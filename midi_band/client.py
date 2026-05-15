@@ -108,8 +108,11 @@ class BandClient:
             "song": s["song"] or self._pending_song or None,
             "tracks": s["tracks"] or self._pending_track_names,
             "playing": s["playing"],
+            "paused": s.get("paused"),
             "position": s["position"],
             "duration": s["duration"] or self._pending_duration,
+            "in_count_in": s.get("in_count_in"),
+            "count_in_remaining": s.get("count_in_remaining"),
             "assignments": dict(self._all_assignments),
             "server_offset": self._server_offset,
         }
@@ -388,6 +391,7 @@ class BandClient:
         self.player.schedule(
             events, local_start, self._pending_song,
             self._pending_track_names, self._pending_duration + count_in_lead,
+            count_in_lead=count_in_lead,
         )
         self.on_change()
 

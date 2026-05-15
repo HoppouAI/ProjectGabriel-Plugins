@@ -49,6 +49,18 @@ class BandChatbox:
             tracks = [t.get("display_label") or t.get("instrument") or t.get("name") or "?" for t in tracks]
         if not tracks:
             tracks = ["(no tracks assigned)"]
+        # count-in mode: big visible "starting in N..." countdown so
+        # everyone in vrchat knows the band is about to drop
+        if s.get("in_count_in"):
+            remaining = float(s.get("count_in_remaining") or 0.0)
+            n = max(1, int(remaining + 0.999))  # ceiling, never show 0
+            lines = [
+                f"midi: {song}",
+                DIVIDER,
+                f"\u25b6 starting in {n}...",
+            ]
+            lines.extend(tracks)
+            return "\n".join(lines)
         prefix = "midi (paused): " if s.get("paused") else "midi: "
         lines = [f"{prefix}{song}", DIVIDER]
         bar = _progress_bar(float(s.get("position") or 0.0),

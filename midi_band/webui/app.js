@@ -252,7 +252,11 @@ async function refreshStatus() {
   }
   nowSongEl.textContent = currentSong || "no song loaded";
   let state = "idle";
-  if (s.playing) state = "playing";
+  if (s.in_count_in) {
+    const remaining = Number(s.count_in_remaining || 0);
+    const n = Math.max(1, Math.ceil(remaining));
+    state = `\u25b6 starting in ${n}...`;
+  } else if (s.playing) state = "playing";
   else if (s.paused) state = "paused";
   else if (currentSong) state = "loaded";
   const members = s.members || [];
@@ -273,7 +277,7 @@ async function refreshStatus() {
     const lines = [];
     const assigned = s.assignments || {};
     const hostTracks = s.host_tracks || [];
-    const nameOf = (i) => (s.tracks[i] && s.tracks[i].name) || `track ${i}`;
+    const nameOf = (i) => (s.tracks[i] && (s.tracks[i].display_label || s.tracks[i].instrument || s.tracks[i].name)) || `track ${i}`;
     if (hostTracks.length) lines.push(`${s.instance || "host"}: ${hostTracks.map(nameOf).join(", ")}`);
     for (const [who, idxs] of Object.entries(assigned)) {
       lines.push(`${who}: ${(idxs || []).map(nameOf).join(", ") || "(none)"}`);

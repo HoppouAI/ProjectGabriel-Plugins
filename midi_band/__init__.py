@@ -127,6 +127,9 @@ class MidiBandPlugin(Plugin):
             )
             BandTools._server = server
             BandTools._client = None
+            # nudge change listeners when a song ends so the chatbox /
+            # webui blank out immediately instead of waiting for poll
+            player.on_finished = server.on_change
             chatbox = BandChatbox(lambda: _host_chatbox_status(server))
             ctx.subscribe("startup", lambda: server.start())
             ctx.subscribe("shutdown", lambda: server.stop())
@@ -157,6 +160,7 @@ class MidiBandPlugin(Plugin):
             )
             BandTools._server = None
             BandTools._client = client
+            player.on_finished = client.on_change
             chatbox = BandChatbox(lambda: client.status())
             ctx.subscribe("startup", lambda: client.start())
             ctx.subscribe("shutdown", lambda: client.stop())
@@ -219,8 +223,11 @@ def _host_chatbox_status(server) -> dict:
         "song": ps.get("song") or info.get("song"),
         "tracks": track_names,
         "playing": ps.get("playing"),
+        "paused": ps.get("paused"),
         "position": ps.get("position"),
         "duration": ps.get("duration") or info.get("duration"),
+        "in_count_in": ps.get("in_count_in"),
+        "count_in_remaining": ps.get("count_in_remaining"),
     }
 
 

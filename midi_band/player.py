@@ -10,7 +10,7 @@ import logging
 import threading
 import time
 from pathlib import Path
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +58,8 @@ class MidiPlayer:
         self._last_song_orig_duration: float = 0.0
         self._paused_offset: float = 0.0
         self._is_paused: bool = False
+        self._count_in_lead: float = 0.0
+        self.on_finished: Callable[[], None] = lambda: None
 
     def _default_driver(self) -> Optional[str]:
         # fluidsynth's auto driver is unreliable on Windows: it tries
@@ -162,7 +164,8 @@ class MidiPlayer:
         return self.schedule(events, start_at_local, label, [label], duration)
 
     def schedule(self, events, start_at_local: float, song: str,
-                 track_names: List[str], duration: float) -> bool:
+                 track_names: List[str], duration: float,
+                 count_in_lead: float = 0.0) -> bool:
         if not self._ensure_synth():
             return False
         # kill any prior playback before starting a new one
@@ -177,6 +180,7 @@ class MidiPlayer:
             self._last_song_orig_duration = float(duration)
             self._is_paused = False
             self._paused_offset = 0.0
+            self._count_in_lead = float(count_in_lead)
             self._thread = threading.Thread(
                 target=self._run,
                 args=(events, start_at_local, self._stop_flag),
@@ -224,6 +228,25 @@ class MidiPlayer:
                 self._all_notes_off()
             except Exception:
                 pass
+            # if we got here without being stopped, the song ended naturally.
+            # clear state so the chatbox / webui know it's done. stop_playback
+            # already clears state when it kills us, this only matters on
+            # natural completion.
+            if not stop_flag.is_set():
+                with self._lock:
+                    if self._stop_flag is stop_flag:
+                        self._current_song = None
+                        self._current_tracks = []
+                        self._duration = 0.0
+                        self._last_events = []
+                        self._is_paused = False
+                        self._paused_offset = 0.0
+                        self._count_in_lead = 0.0
+                # nudge listeners so the UI/chatbox re-render right away
+                try:
+                    self.on_finished()
+                except Exception:
+                    pass
 
     def nudge(self, delta_seconds: float) -> None:
         """Shift scheduled_start by delta. Negative = catch up (events fire sooner),
@@ -418,14 +441,25 @@ class MidiPlayer:
             pos = self._paused_offset
         elif playing or self._current_song:
             pos = max(0.0, time.monotonic() - self._scheduled_start)
+        # don't let position run past duration once the song ended
+        if self._duration > 0:
+            pos = min(pos, self._duration)
+        lead = float(self._count_in_lead)
+        in_count_in = playing and lead > 0 and pos < lead
+        # song-relative position: zero during count-in, then ticks up
+        song_pos = max(0.0, pos - lead) if lead > 0 else pos
+        song_dur = max(0.0, self._duration - lead) if lead > 0 else self._duration
         return {
             "playing": playing,
             "paused": self._is_paused,
             "song": self._current_song,
             "tracks": list(self._current_tracks),
-            "position": pos,
-            "duration": self._duration,
+            "position": song_pos,
+            "duration": song_dur,
             "gain": self.gain,
+            "count_in_lead": lead,
+            "count_in_remaining": max(0.0, lead - pos) if in_count_in else 0.0,
+            "in_count_in": in_count_in,
         }
 
     def shutdown(self):
