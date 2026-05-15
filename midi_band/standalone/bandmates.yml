@@ -1,6 +1,0 @@
-shared:
-  host: 10.0.0.217
-  port: 8784
-  driver: dsound
-  soundfont: C:/Users/myhom/Downloads/soundfont.sf2
-bandmates: []
