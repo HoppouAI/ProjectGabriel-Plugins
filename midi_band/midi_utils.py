@@ -107,7 +107,15 @@ _NAME_HINTS = [
 def infer_program_from_name(track_name: str) -> Optional[int]:
     if not track_name:
         return None
-    low = track_name.lower()
+    low = track_name.lower().strip()
+    # some midis prefix the track name with the 1-indexed GM program number,
+    # eg "031 Distortion Guitar" or "086 Solo Vox". trust that over text hints.
+    import re
+    m = re.match(r"^0*(\d{1,3})\b", low)
+    if m:
+        n = int(m.group(1))
+        if 1 <= n <= 128:
+            return n - 1
     for needle, prog in _NAME_HINTS:
         if needle in low:
             return prog
@@ -181,12 +189,28 @@ def parse_tracks(file_bytes: bytes) -> dict:
         track_dur = _ticks_to_seconds(last_note_tick, tpb, tempo_map) if last_note_tick else 0.0
         total_duration = max(total_duration, track_dur)
 
+        # drums first (channel 9 is GM percussion regardless of program).
+        # also catch "drum" in the track name since some files put drums on
+        # other channels.
+        is_drum_name = bool(name) and "drum" in name.lower()
+        if 9 in channels or is_drum_name:
+            instrument = "Drums"
         if not instrument:
-            if 9 in channels:
-                instrument = "Drums"
-            elif program_per_channel:
-                _, prog = next(iter(program_per_channel.items()))
+            # prefer a non-zero program_change, since program=0 is usually
+            # just the default and doesnt mean the track is actually piano.
+            nonzero = [p for p in program_per_channel.values() if p != 0]
+            if nonzero:
+                prog = nonzero[0]
                 instrument = GM_PROGRAMS[prog] if 0 <= prog < 128 else f"Program {prog}"
+            else:
+                # all program_changes are 0 (or none at all). try to infer
+                # from the track name, which often encodes the real instrument
+                # (eg "031 Distortion Guitar").
+                hinted = infer_program_from_name(name)
+                if hinted is not None:
+                    instrument = GM_PROGRAMS[hinted]
+                elif program_per_channel:
+                    instrument = GM_PROGRAMS[0]
         if not name:
             name = instrument or f"Track {i}"
 
