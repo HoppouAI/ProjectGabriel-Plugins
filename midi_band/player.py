@@ -118,16 +118,23 @@ class MidiPlayer:
                 # different sinks instead of all stacking on the default.
                 if drv and self.device:
                     try:
-                        ok = self._fs.setting(f"audio.{drv}.device", str(self.device))
-                        if ok is False:
+                        self._fs.setting(f"audio.{drv}.device", str(self.device))
+                        # read it back, fluidsynth silently falls back to
+                        # 'default' if the name doesn't match an endpoint
+                        # exactly, and pyfluidsynth's setting() returns None
+                        # so we can't tell from the call alone.
+                        try:
+                            got = self._fs.get_setting(f"audio.{drv}.device")
+                        except Exception:
+                            got = None
+                        if got and str(got) != str(self.device):
                             logger.warning(
-                                f"midi_band: fluidsynth REJECTED audio.{drv}.device='{self.device}'. "
-                                f"the {drv} driver couldn't find a device with that name, falling back "
-                                f"to the system default. run 'standalone_client.py --list-devices' to "
-                                f"see the exact names this machine accepts."
+                                f"midi_band: fluidsynth did not accept audio.{drv}.device='{self.device}', "
+                                f"current value is '{got}'. names must match the wasapi friendly name EXACTLY. "
+                                f"run 'standalone_client.py --list-devices' to see accepted names."
                             )
                         else:
-                            logger.info(f"midi_band: fluidsynth opening audio.{drv}.device='{self.device}'")
+                            logger.info(f"midi_band: routing audio to '{self.device}' via {drv}")
                     except Exception as e:
                         logger.warning(f"midi_band: could not set audio.{drv}.device='{self.device}': {e}")
                 if drv:

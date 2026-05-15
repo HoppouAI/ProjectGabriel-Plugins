@@ -188,7 +188,35 @@ def _rename_audio_session_loop(name: str, log: logging.Logger) -> None:
 
 
 def _list_devices_and_exit():
-    # try sounddevice first, it gives consistent names across host APIs
+    # on windows, prefer pycaw - it queries IMMDevice directly so we get
+    # the FULL wasapi friendly name. sounddevice/portaudio truncates names
+    # at 31 chars (PaDeviceInfo.name buffer) which makes long names like
+    # "CABLE-B Input (VB-Audio Cable B)" appear as "CABLE-B Input (VB-Audio Cable B"
+    # and fluidsynth then can't match them.
+    if sys.platform.startswith("win"):
+        try:
+            from pycaw.pycaw import AudioUtilities  # type: ignore
+            print("\nOUTPUT DEVICES (use the name exactly as printed for --device):\n")
+            seen = set()
+            for spk in AudioUtilities.GetAllDevices():
+                try:
+                    flow = int(getattr(spk, "dataFlow", 0))
+                except Exception:
+                    flow = 0
+                if flow != 0:
+                    continue
+                name = str(getattr(spk, "FriendlyName", "") or "").strip()
+                if not name or name in seen:
+                    continue
+                seen.add(name)
+                print(f"  [WASAPI] {name}")
+            print(
+                "\nThese are the exact names the wasapi driver accepts. Copy & paste\n"
+                "into --device or the launcher dropdown verbatim, including parens.\n"
+            )
+            sys.exit(0)
+        except ImportError:
+            print("pycaw not installed, falling back to sounddevice (names may be truncated past 31 chars).\n")
     try:
         import sounddevice as sd  # type: ignore
         try:

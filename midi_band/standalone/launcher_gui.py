@@ -94,29 +94,52 @@ COL_YELLOW = "#c98b1c"
 COL_TEXT_DIM = "#888888"
 
 
+def _list_devices_pycaw() -> List[str]:
+    # use pycaw on windows to get the FULL wasapi friendly name. sounddevice
+    # truncates names at 31 chars (portaudio's PaDeviceInfo.name buffer limit)
+    # which makes fluidsynth's wasapi backend fail to match anything longer
+    # than 31 chars, eg "CABLE-B Input (VB-Audio Cable B)" gets cut to
+    # "CABLE-B Input (VB-Audio Cable B" and fluidsynth says "cannot find
+    # device". pycaw queries IMMDevice directly so the name matches what
+    # fluid_wasapi_find_device sees.
+    try:
+        from pycaw.pycaw import AudioUtilities  # type: ignore
+    except Exception as e:
+        log.warning(f"pycaw not available, falling back to sounddevice (names may be truncated): {e}")
+        return []
+    out: List[str] = []
+    try:
+        for spk in AudioUtilities.GetAllDevices():
+            # only render endpoints. dataflow 0 = render, 1 = capture
+            try:
+                flow = int(getattr(spk, "dataFlow", 0))
+            except Exception:
+                flow = 0
+            if flow != 0:
+                continue
+            name = getattr(spk, "FriendlyName", None) or ""
+            if name and name not in out:
+                out.append(name)
+    except Exception as e:
+        log.warning(f"pycaw device enumeration failed: {e}")
+        return []
+    return out
+
+
 def list_output_devices() -> List[str]:
+    # on windows always prefer pycaw, the names need to match fluidsynth's
+    # wasapi enumeration EXACTLY or the device-not-found error fires.
+    if sys.platform.startswith("win"):
+        names = _list_devices_pycaw()
+        if names:
+            return names
     if _sd is None:
         return []
     try:
-        # filter to WASAPI host api on windows so device names match
-        # what fluidsynth's wasapi driver enumerates. otherwise the names
-        # come from MME/portaudio and fluidsynth rejects them silently
-        # and falls back to the default device.
-        wasapi_idx = None
-        if sys.platform.startswith("win"):
-            try:
-                for i, api in enumerate(_sd.query_hostapis()):
-                    if "wasapi" in str(api.get("name", "")).lower():
-                        wasapi_idx = i
-                        break
-            except Exception:
-                pass
         devs = _sd.query_devices()
         out: List[str] = []
         for d in devs:
             if d.get("max_output_channels", 0) <= 0:
-                continue
-            if wasapi_idx is not None and d.get("hostapi") != wasapi_idx:
                 continue
             name = d.get("name") or ""
             if name and name not in out:
