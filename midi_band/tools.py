@@ -194,6 +194,19 @@ class BandTools(BaseTool):
                 ),
                 parameters={"type": "OBJECT", "properties": {}},
             ),
+            types.FunctionDeclaration(
+                name="bandSyncStatus",
+                description=(
+                    "Check how well every bandmate is locked to your clock. Reports each "
+                    "bandmate's clock offset (how far their clock drifted from yours, in "
+                    "milliseconds) and round-trip latency. Tight numbers (under ~30ms each) "
+                    "mean everyone will start a song together. Big or stale numbers mean a "
+                    "bandmate's connection is bad.\n"
+                    "**Invocation Condition:** Call when the user asks if the band is in sync, "
+                    "asks about latency, or wonders if a specific bandmate is lagging. Host only."
+                ),
+                parameters={"type": "OBJECT", "properties": {}},
+            ),
         ]
 
     async def handle(self, name, args):
@@ -269,6 +282,8 @@ class BandTools(BaseTool):
             dur = max(2.0, min(30.0, dur))
             bpm = max(40.0, min(240.0, bpm))
             return await srv.soundcheck(duration=dur, bpm=bpm)
+        if name == "bandSyncStatus":
+            return {"result": "ok", **srv.get_sync_status()}
         return None
 
 

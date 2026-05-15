@@ -35,6 +35,10 @@ class _Peer:
         self.connected_at = _now()
         self.ready_session: Optional[str] = None
         self.nack_reason: Optional[str] = None
+        # most recent sync info reported by client in its PINGs
+        self.sync_offset: float = 0.0
+        self.sync_rtt: float = 0.0
+        self.sync_updated_at: float = 0.0
 
 
 class BandServer:
@@ -182,6 +186,15 @@ class BandServer:
                 await writer.drain()
             except Exception:
                 pass
+            peer = self._peers.get(writer)
+            if peer is not None:
+                co = msg.get("client_offset")
+                cr = msg.get("client_rtt")
+                if isinstance(co, (int, float)):
+                    peer.sync_offset = float(co)
+                if isinstance(cr, (int, float)):
+                    peer.sync_rtt = float(cr)
+                peer.sync_updated_at = _now()
             return
         if kind == P.READY:
             peer = self._peers.get(writer)
@@ -517,3 +530,24 @@ class BandServer:
         await self._broadcast(P.encode({"type": P.VOLUME, "gain": applied}))
         self.on_change()
         return {"result": "ok", "gain": applied}
+
+    def get_sync_status(self) -> dict:
+        """Snapshot of clock-sync health for every connected client."""
+        now = _now()
+        members = []
+        for peer in self._peers.values():
+            age = now - peer.sync_updated_at if peer.sync_updated_at else None
+            members.append({
+                "name": peer.name,
+                "offset_ms": round(peer.sync_offset * 1000.0, 2),
+                "rtt_ms": round(peer.sync_rtt * 1000.0, 2),
+                "age_seconds": round(age, 2) if age is not None else None,
+                "ready_session": peer.ready_session,
+                "nack_reason": peer.nack_reason,
+            })
+        members.sort(key=lambda m: m["name"])
+        return {
+            "host": self.instance_name,
+            "lead_seconds": round(self.lead, 3),
+            "members": members,
+        }

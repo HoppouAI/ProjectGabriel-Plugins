@@ -85,6 +85,8 @@ class _Handler(BaseHTTPRequestHandler):
             return self._handle_list()
         if path == "/api/status":
             return self._handle_status()
+        if path == "/api/sync":
+            return self._handle_sync()
         self.send_error(404)
 
     def do_POST(self):
@@ -269,6 +271,26 @@ class _Handler(BaseHTTPRequestHandler):
         except Exception as e:
             out["error"] = str(e)
         return self._json(200, out)
+
+    def _handle_sync(self):
+        store = self._store()
+        if store is None:
+            return self._json(500, {"result": "error", "message": "no library"})
+        srv = self._server_obj()
+        if srv is None:
+            return self._json(200, {
+                "result": "ok",
+                "role": "client",
+                "instance": store.instance_name,
+                "message": "sync stats are only visible from the band host",
+            })
+        try:
+            data = srv.get_sync_status()
+        except Exception as e:
+            return self._json(500, {"result": "error", "message": str(e)})
+        data["result"] = "ok"
+        data["role"] = "host"
+        return self._json(200, data)
 
     def _handle_load(self):
         srv = self._server_obj()

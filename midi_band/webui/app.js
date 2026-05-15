@@ -23,6 +23,9 @@ const btnStop = $("btnStop");
 const btnSoundcheck = $("btnSoundcheck");
 const btnAutoAssign = $("btnAutoAssign");
 
+const syncListEl = $("syncList");
+const syncSummaryEl = $("syncSummary");
+
 let allSongs = [];
 let currentSong = null;
 let isHost = false;
@@ -288,5 +291,53 @@ async function refreshAll() {
   await Promise.all([loadSongs(), refreshStatus()]);
 }
 
+function syncQuality(offsetMs, rttMs, age) {
+  if (age != null && age > 10) return "stale";
+  const o = Math.abs(offsetMs);
+  if (o < 15 && rttMs < 30) return "tight";
+  if (o < 40 && rttMs < 80) return "ok";
+  return "loose";
+}
+
+async function refreshSync() {
+  let s;
+  try {
+    s = await api("/api/sync");
+  } catch (e) {
+    syncSummaryEl.textContent = `error: ${e.message}`;
+    return;
+  }
+  if (s.role !== "host") {
+    syncSummaryEl.textContent = "host only";
+    syncListEl.innerHTML = `<li class="empty">${escapeHtml(s.message || "client mode, no sync stats")}</li>`;
+    return;
+  }
+  const members = s.members || [];
+  if (!members.length) {
+    syncSummaryEl.textContent = "no bandmates connected";
+    syncListEl.innerHTML = `<li class="empty">no remote bandmates</li>`;
+    return;
+  }
+  const tight = members.filter((m) => syncQuality(m.offset_ms, m.rtt_ms, m.age_seconds) === "tight").length;
+  syncSummaryEl.textContent = `${members.length} bandmate${members.length === 1 ? "" : "s"} \u00b7 ${tight} tight \u00b7 lead ${(s.lead_seconds || 0).toFixed(2)}s`;
+  syncListEl.innerHTML = members
+    .map((m) => {
+      const q = syncQuality(m.offset_ms, m.rtt_ms, m.age_seconds);
+      const ageTxt = m.age_seconds == null ? "no data yet" : `${m.age_seconds.toFixed(1)}s ago`;
+      return `<li class="sync-row q-${q}">
+        <span class="sync-name">${escapeHtml(m.name)}</span>
+        <span class="sync-stats">
+          <span><b>offset</b> ${m.offset_ms.toFixed(1)}ms</span>
+          <span><b>rtt</b> ${m.rtt_ms.toFixed(1)}ms</span>
+          <span class="dim">${ageTxt}</span>
+          <span class="sync-pill q-${q}">${q}</span>
+        </span>
+      </li>`;
+    })
+    .join("");
+}
+
 refreshAll();
 setInterval(refreshStatus, 1000);
+setInterval(refreshSync, 1500);
+refreshSync();

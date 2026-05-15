@@ -56,6 +56,7 @@ class BandClient:
         self._pending_song: str = ""
         self._pending_track_names: List[str] = []
         self._pending_duration: float = 0.0
+        self._last_rtt: float = 0.0
 
         # last assignments broadcast from host (everybody-on-the-band view)
         self._all_assignments: dict = {}
@@ -153,7 +154,12 @@ class BandClient:
         try:
             while not self._stop and self._writer is not None:
                 try:
-                    self._writer.write(P.encode({"type": P.PING, "t": time.monotonic()}))
+                    self._writer.write(P.encode({
+                        "type": P.PING,
+                        "t": time.monotonic(),
+                        "client_offset": self._server_offset,
+                        "client_rtt": self._last_rtt,
+                    }))
                     await self._writer.drain()
                 except Exception:
                     return
@@ -166,7 +172,12 @@ class BandClient:
             return
         try:
             for _ in range(PING_BURST_COUNT):
-                self._writer.write(P.encode({"type": P.PING, "t": time.monotonic()}))
+                self._writer.write(P.encode({
+                    "type": P.PING,
+                    "t": time.monotonic(),
+                    "client_offset": self._server_offset,
+                    "client_rtt": self._last_rtt,
+                }))
                 await self._writer.drain()
                 await asyncio.sleep(PING_BURST_GAP)
         except Exception:
@@ -185,6 +196,7 @@ class BandClient:
                 server_t = float(msg.get("server_t"))
                 t_recv = time.monotonic()
                 rtt = t_recv - t_sent
+                self._last_rtt = rtt
                 est = server_t + rtt * 0.5
                 offset = est - t_recv
                 if self._server_offset == 0.0:
