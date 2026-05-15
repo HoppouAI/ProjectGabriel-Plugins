@@ -1,19 +1,21 @@
 """Tiny stdlib HTTP server for the midi_band library.
 
-Serves three static files (index.html, style.css, app.js) and two JSON
-endpoints: GET /api/songs and POST /api/upload (multipart). Runs in a
-background thread so it doesnt block the asyncio band server. No extra
-deps so it works the same in the host plugin and the standalone client.
+Serves static UI files and a small JSON control API: list/upload/delete
+songs and control playback (load, play, stop, pause, resume, volume,
+soundcheck, auto-assign). Runs in a background thread so it doesn't
+block the asyncio band server. No extra deps.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Any
+from urllib.parse import unquote
 
 logger = logging.getLogger(__name__)
 
@@ -81,12 +83,37 @@ class _Handler(BaseHTTPRequestHandler):
             return self._static("app.js")
         if path == "/api/songs":
             return self._handle_list()
+        if path == "/api/status":
+            return self._handle_status()
         self.send_error(404)
 
     def do_POST(self):
         path = self.path.split("?", 1)[0]
         if path == "/api/upload":
             return self._handle_upload()
+        if path == "/api/load":
+            return self._handle_load()
+        if path == "/api/auto_assign":
+            return self._call_async("auto_assign_sync")
+        if path == "/api/play":
+            return self._call_async("start_playback")
+        if path == "/api/stop":
+            return self._call_async("stop_playback")
+        if path == "/api/pause":
+            return self._call_async("pause_playback")
+        if path == "/api/resume":
+            return self._call_async("resume_playback")
+        if path == "/api/volume":
+            return self._handle_volume()
+        if path == "/api/soundcheck":
+            return self._handle_soundcheck()
+        self.send_error(404)
+
+    def do_DELETE(self):
+        path = self.path.split("?", 1)[0]
+        m = re.match(r"^/api/songs/(.+)$", path)
+        if m:
+            return self._handle_delete(unquote(m.group(1)))
         self.send_error(404)
 
     def _handle_list(self):
@@ -173,19 +200,157 @@ class _Handler(BaseHTTPRequestHandler):
             "result": "ok", "name": saved_name, "size": saved_size,
         })
 
+    def _handle_delete(self, name: str):
+        store = getattr(self.server, "_store", None)
+        if store is None:
+            return self._json(500, {"result": "error", "message": "no library"})
+        safe = _safe_name(name)
+        if not safe:
+            return self._json(400, {"result": "error", "message": "bad filename"})
+        target = store.library_dir / safe
+        if not target.exists():
+            return self._json(404, {"result": "error", "message": "not found"})
+        try:
+            target.unlink()
+        except Exception as e:
+            return self._json(500, {"result": "error", "message": str(e)})
+        logger.info(f"midi_band webui: deleted {safe}")
+        return self._json(200, {"result": "ok", "deleted": safe})
+
+    def _read_json(self) -> dict:
+        try:
+            length = int(self.headers.get("Content-Length") or "0")
+        except Exception:
+            length = 0
+        if length <= 0:
+            return {}
+        try:
+            raw = self.rfile.read(length)
+            return json.loads(raw.decode("utf-8")) or {}
+        except Exception:
+            return {}
+
+    def _store(self):
+        return getattr(self.server, "_store", None)
+
+    def _server_obj(self):
+        store = self._store()
+        if store is None:
+            return None
+        return getattr(store, "band_server", None)
+
+    def _handle_status(self):
+        store = self._store()
+        if store is None:
+            return self._json(500, {"result": "error", "message": "no library"})
+        srv = self._server_obj()
+        out = {
+            "result": "ok",
+            "instance": store.instance_name,
+            "role": "host" if srv is not None else "client",
+        }
+        if srv is None:
+            return self._json(200, out)
+        try:
+            info = srv.loaded_info()
+            ps = srv.player.status()
+            out.update({
+                "song": ps.get("song") or info.get("song"),
+                "tracks": info.get("tracks"),
+                "host_tracks": info.get("host_tracks"),
+                "assignments": info.get("assignments"),
+                "duration": ps.get("duration") or info.get("duration"),
+                "position": ps.get("position"),
+                "playing": ps.get("playing"),
+                "paused": ps.get("paused"),
+                "gain": ps.get("gain"),
+                "members": [srv.instance_name] + srv.list_clients(),
+            })
+        except Exception as e:
+            out["error"] = str(e)
+        return self._json(200, out)
+
+    def _handle_load(self):
+        srv = self._server_obj()
+        if srv is None:
+            return self._json(400, {"result": "error", "message": "this instance is not a band host"})
+        body = self._read_json()
+        title = str(body.get("title") or "").strip()
+        if not title:
+            return self._json(400, {"result": "error", "message": "title required"})
+        try:
+            res = srv.load_song(title)
+        except Exception as e:
+            return self._json(500, {"result": "error", "message": str(e)})
+        return self._json(200, res)
+
+    def _handle_volume(self):
+        srv = self._server_obj()
+        if srv is None:
+            return self._json(400, {"result": "error", "message": "host only"})
+        body = self._read_json()
+        try:
+            level = float(body.get("level"))
+        except Exception:
+            return self._json(400, {"result": "error", "message": "level must be a number"})
+        return self._call_async("set_volume", level)
+
+    def _handle_soundcheck(self):
+        srv = self._server_obj()
+        if srv is None:
+            return self._json(400, {"result": "error", "message": "host only"})
+        body = self._read_json()
+        try:
+            dur = float(body.get("duration") or 10.0)
+        except Exception:
+            dur = 10.0
+        try:
+            bpm = float(body.get("bpm") or 120.0)
+        except Exception:
+            bpm = 120.0
+        return self._call_async("soundcheck", dur, bpm)
+
+    def _call_async(self, method_name: str, *args: Any):
+        """Invoke an async method on the band server from this thread by
+        bouncing the coroutine onto the server's asyncio loop."""
+        srv = self._server_obj()
+        if srv is None:
+            return self._json(400, {"result": "error", "message": "host only"})
+        # auto_assign is sync, special-case it
+        if method_name == "auto_assign_sync":
+            try:
+                return self._json(200, srv.auto_assign())
+            except Exception as e:
+                return self._json(500, {"result": "error", "message": str(e)})
+        method = getattr(srv, method_name, None)
+        if method is None:
+            return self._json(500, {"result": "error", "message": f"unknown method {method_name}"})
+        loop = getattr(srv, "_loop", None)
+        if loop is None or not loop.is_running():
+            return self._json(503, {"result": "error", "message": "band server not running"})
+        try:
+            fut = asyncio.run_coroutine_threadsafe(method(*args), loop)
+            res = fut.result(timeout=10.0)
+        except Exception as e:
+            return self._json(500, {"result": "error", "message": str(e)})
+        return self._json(200, res or {"result": "ok"})
+
 
 class _Store:
-    def __init__(self, library_dir: Path, instance_name: str):
+    def __init__(self, library_dir: Path, instance_name: str, band_server=None):
         self.library_dir = library_dir
         self.instance_name = instance_name
+        self.band_server = band_server
 
 
 class WebUiServer:
-    def __init__(self, bind: str, port: int, library_dir: Path, instance_name: str):
+    def __init__(self, bind: str, port: int, library_dir: Path, instance_name: str,
+                 band_server=None):
         self.bind = bind or "0.0.0.0"
         self.port = int(port)
         self.library_dir = Path(library_dir)
         self.instance_name = instance_name or "gabriel"
+        self.band_server = band_server
         self._httpd: Optional[ThreadingHTTPServer] = None
         self._thread: Optional[threading.Thread] = None
 
@@ -198,7 +363,9 @@ class WebUiServer:
             logger.error(f"midi_band webui: bind {self.bind}:{self.port} failed: {e}")
             self._httpd = None
             return False
-        self._httpd._store = _Store(self.library_dir, self.instance_name)  # type: ignore[attr-defined]
+        self._httpd._store = _Store(  # type: ignore[attr-defined]
+            self.library_dir, self.instance_name, self.band_server,
+        )
         self._thread = threading.Thread(target=self._httpd.serve_forever,
                                         name="midi_band-webui", daemon=True)
         self._thread.start()

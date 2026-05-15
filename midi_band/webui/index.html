@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>midi_band library</title>
+<title>midi_band</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -13,6 +13,36 @@
 </header>
 
 <main>
+  <section class="player" id="player">
+    <div class="player-head">
+      <div>
+        <div id="nowSong" class="now-song">no song loaded</div>
+        <div id="nowState" class="dim">idle</div>
+      </div>
+      <div class="player-buttons">
+        <button id="btnPlay" class="primary">Play</button>
+        <button id="btnPause">Pause</button>
+        <button id="btnResume">Resume</button>
+        <button id="btnStop">Stop</button>
+        <button id="btnSoundcheck">Soundcheck</button>
+        <button id="btnAutoAssign">Auto-assign</button>
+      </div>
+    </div>
+    <div class="bar-wrap">
+      <div class="bar"><div id="barFill" class="bar-fill"></div></div>
+      <div class="bar-labels">
+        <span id="barPos">0:00</span>
+        <span id="barDur">0:00</span>
+      </div>
+    </div>
+    <div class="vol-row">
+      <label for="vol">Volume</label>
+      <input id="vol" type="range" min="0" max="2" step="0.05" value="0.5">
+      <span id="volVal" class="dim">0.50</span>
+    </div>
+    <div id="trackBox" class="track-box dim">no song loaded</div>
+  </section>
+
   <section class="upload">
     <label class="drop" id="drop">
       <input id="picker" type="file" accept=".mid,.midi" multiple hidden>

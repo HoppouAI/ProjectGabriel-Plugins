@@ -136,6 +136,7 @@ class MidiBandPlugin(Plugin):
                 webui = WebUiServer(
                     bind=webui_bind, port=webui_port,
                     library_dir=library_dir, instance_name=instance_name,
+                    band_server=server,
                 )
                 ctx.subscribe("startup", lambda: webui.start())
                 ctx.subscribe("shutdown", lambda: webui.stop())
