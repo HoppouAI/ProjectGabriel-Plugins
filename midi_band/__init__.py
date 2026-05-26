@@ -82,7 +82,7 @@ class MidiBandPlugin(Plugin):
         instance_name = str(cfg("instance_name", "gabriel") or "gabriel")
         bind = str(cfg("bind", "0.0.0.0") or "0.0.0.0")
         host_address = str(cfg("host_address", "127.0.0.1") or "127.0.0.1")
-        port = int(cfg("port", 8766) or 8766)
+        port = int(cfg("port", 8784) or 8784)
         lead = float(cfg("schedule_lead_seconds", 1.5) or 1.5)
         gain = float(cfg("synth_gain", 0.5) or 0.5)
         driver = cfg("audio_driver")
@@ -138,7 +138,7 @@ class MidiBandPlugin(Plugin):
 
             webui_enabled = bool(cfg("webui_enabled", True))
             webui_bind = str(cfg("webui_bind", "0.0.0.0") or "0.0.0.0")
-            webui_port = int(cfg("webui_port", 8767) or 8767)
+            webui_port = int(cfg("webui_port", 8783) or 8783)
             if webui_enabled:
                 webui = WebUiServer(
                     bind=webui_bind, port=webui_port,

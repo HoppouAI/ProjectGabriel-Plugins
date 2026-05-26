@@ -35,7 +35,7 @@ cd midi_band/standalone
 uv sync
 uv run standalone_client.py `
     --host 192.168.1.50 `
-    --port 8766 `
+    --port 8784 `
     --name drummer `
     --soundfont C:\sf2\GeneralUser.sf2
 ```
@@ -48,7 +48,7 @@ python -m venv .venv
 .venv\Scripts\pip install -r requirements.txt
 .venv\Scripts\python standalone_client.py `
     --host 192.168.1.50 `
-    --port 8766 `
+    --port 8784 `
     --name drummer `
     --soundfont C:\sf2\GeneralUser.sf2
 ```
@@ -76,7 +76,7 @@ Missing required values (`host`, `name`, `soundfont`) error out with
 a clear message.
 
 - `--config` -- path to a config.yml. Defaults to `./config.yml`.
-- `--host` / `--port` -- the band host's address. Port defaults to 8766.
+- `--host` / `--port` -- the band host's address. Port defaults to 8784.
 - `--name` -- shows up in `listBandMembers` on the host's AI. Pick
   something the AI will recognize (e.g. `drummer`, `bassist`,
   `bandmate_alice`).

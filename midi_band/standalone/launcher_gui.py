@@ -304,7 +304,7 @@ class BandmateCard(ctk.CTkFrame):
     def start(self):
         shared = self.app.shared_settings()
         host = shared.get("host", "").strip()
-        port = shared.get("port", 8766)
+        port = shared.get("port", 8784)
         driver = shared.get("driver", DEFAULT_DRIVER)
         sf = self.sf_var.get().strip() or shared.get("soundfont", "").strip()
         name = self.name_var.get().strip()
@@ -466,7 +466,7 @@ class LauncherApp(ctk.CTk):
         ctk.CTkEntry(body, textvariable=self.host_var, width=160, height=30).grid(row=0, column=1, padx=(0, 12))
 
         ctk.CTkLabel(body, text="Port", text_color=COL_TEXT_DIM).grid(row=0, column=2, padx=(0, 4))
-        self.port_var = ctk.StringVar(value=str(shared.get("port", 8766)))
+        self.port_var = ctk.StringVar(value=str(shared.get("port", 8784)))
         ctk.CTkEntry(body, textvariable=self.port_var, width=80, height=30).grid(row=0, column=3, padx=(0, 12))
 
         ctk.CTkLabel(body, text="Driver", text_color=COL_TEXT_DIM).grid(row=0, column=4, padx=(0, 4))
@@ -539,7 +539,7 @@ class LauncherApp(ctk.CTk):
         try:
             port = int(self.port_var.get())
         except Exception:
-            port = 8766
+            port = 8784
         return {
             "host": self.host_var.get().strip(),
             "port": port,

@@ -75,7 +75,7 @@ plugins:
     role: host
     bind: 0.0.0.0
     host_address: 192.168.1.50
-    port: 8766
+    port: 8784
     instance_name: gabriel_a
     soundfont: "sfx/soundfonts/default.sf2"
     library_dir: "sfx/midi"
@@ -85,7 +85,7 @@ plugins:
     chatbox_priority: 25
     webui_enabled: true        # tiny upload UI on the host
     webui_bind: 0.0.0.0
-    webui_port: 8767
+    webui_port: 8783
 ```
 
 **Option B: local `config.yml`** inside the plugin folder
@@ -130,7 +130,7 @@ cd midi_band/standalone
 uv sync
 uv run standalone_client.py `
     --host 192.168.1.50 `
-    --port 8766 `
+    --port 8784 `
     --name drummer `
     --soundfont C:\sf2\GeneralUser.sf2
 ```

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 
-DEFAULT_PORT = 8766
+DEFAULT_PORT = 8784
 PROTO_VERSION = 1
 # midi files travel over a single newline JSON line as base64. bump the
 # stream reader limit so multi-MB songs dont get truncated.
