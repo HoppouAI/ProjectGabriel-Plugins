@@ -1,0 +1,10 @@
+name: voiceid
+version: 0.1.0
+api_version: 3
+description: "Voice fingerprinting. AI can save a voice under a username and ask who is currently speaking, using Resemblyzer speaker embeddings."
+author: HoppouAI
+enabled: true
+entry: __init__.py
+requirements:
+  - resemblyzer
+  - numpy
