@@ -32,17 +32,17 @@ Read that first if you want to write your own.
 ## Installing a plugin
 
 Plugins live in the `plugins/` folder of your Gabriel install (the
-`ProjectGabriel-Remaster` repo, NOT this one). Easiest workflow is to
+`ProjectGabriel-Remastered` repo, NOT this one). Easiest workflow is to
 clone this repo right next to your Gabriel install so the paths stay
 short:
 
 ```
 your-projects/
-  ProjectGabriel-Remaster/    <- your gabriel install
+  ProjectGabriel-Remastered/    <- your gabriel install
   ProjectGabriel-Plugins/     <- this repo, cloned next to it
 ```
 
-Then from a PowerShell terminal inside `ProjectGabriel-Remaster/`:
+Then from a PowerShell terminal inside `ProjectGabriel-Remastered/`:
 
 1. **Copy the plugin folder** you want into your `plugins/` dir.
 
