@@ -1,0 +1,44 @@
+# OmniVoice plugin local config. Optional - everything here can also live
+# in your main config.yml under plugins.omnivoice. Values in this file
+# override values in config.yml.
+#
+# Copy this to plugins/omnivoice/config.yml and tweak. The real config.yml
+# is gitignored.
+
+# Base URL of the omnivoice-serve REST endpoint.
+base_url: "http://127.0.0.1:8000"
+
+# Pick ONE of these three modes:
+#   voice_id  - clone a previously registered voice (POST /v1/voices first)
+#   instruct  - voice design from a text description
+#   (neither) - let OmniVoice pick a voice automatically
+voice_id: ""
+instruct: ""
+
+# Optional language hint. Empty string = auto detect. Examples: "English",
+# "Japanese", "zh", "es". Specifying a language gives slightly better results.
+language: ""
+
+# Inference quality / speed knobs.
+# num_steps: 4-64. Lower is faster, higher is better quality. 16-32 is a
+# good range for real-time chat.
+num_steps: 24
+
+# Classifier-free guidance scale (0.0-10.0). Bump to ~3.0 if you use the
+# singing model and want tag behaviour to be more pronounced.
+guidance_scale: 2.0
+
+# Speaking speed (0.25-4.0). Leave null to use the model's default.
+speed: null
+
+# Apply denoising to the output.
+denoise: true
+
+# How many sentences to synthesise in parallel. 2 keeps the GPU busy
+# without blowing memory on a single GPU box.
+max_concurrent: 2
+
+# How long (seconds) to wait on a single /v1/tts/stream request before
+# giving up. Long for the first sentence so cold cache requests can
+# finish, shorter for streamed continuation.
+request_timeout: 120
