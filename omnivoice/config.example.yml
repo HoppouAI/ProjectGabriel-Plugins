@@ -10,9 +10,23 @@ base_url: "http://127.0.0.1:8000"
 
 # Pick ONE of these three modes:
 #   voice_id  - clone a previously registered voice (POST /v1/voices first)
+#   ref_audio - local audio file to auto-register and clone on start
 #   instruct  - voice design from a text description
-#   (neither) - let OmniVoice pick a voice automatically
+#   (none)    - let OmniVoice pick a voice automatically
 voice_id: ""
+
+# Path to a local reference clip (wav, mp3, flac, ogg). If set and
+# voice_id is empty, the plugin POSTs this file to /v1/voices on start
+# under a deterministic id derived from the file path + mtime, so reruns
+# reuse the cached voice instead of re-uploading.
+ref_audio: ""
+# Optional transcript of ref_audio. If omitted the server auto-transcribes
+# via Whisper (slower first start, more GPU memory briefly).
+ref_text: ""
+# Override the auto-generated voice id. Leave empty to let the plugin
+# pick one from the file name + hash.
+auto_voice_id: ""
+
 instruct: ""
 
 # Optional language hint. Empty string = auto detect. Examples: "English",

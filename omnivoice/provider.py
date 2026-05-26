@@ -97,6 +97,13 @@ class OmniVoiceTTSProvider:
         self._voice_id = cfg("voice_id", "") or None
         self._instruct = cfg("instruct", "") or None
         self._language = cfg("language", "") or None
+        # Local wav/mp3/flac/ogg to use for cloning. On start() we POST this
+        # to /v1/voices once and reuse the returned voice_id for the rest of
+        # the session. The id we register under is derived from the file path
+        # so reruns hit the server's cache.
+        self._ref_audio = cfg("ref_audio", "") or None
+        self._ref_text = cfg("ref_text", "") or None
+        self._auto_voice_id = cfg("auto_voice_id", "") or None
         self._num_steps = int(cfg("num_steps", 24))
         self._guidance_scale = float(cfg("guidance_scale", 2.0))
         speed = cfg("speed", None)
@@ -155,6 +162,16 @@ class OmniVoiceTTSProvider:
             target=self._splitter_loop, daemon=True,
         )
         self._splitter_thread.start()
+        # if a local reference audio file was provided and no voice_id was
+        # already set, register it now (idempotent on repeat starts).
+        if not self._voice_id and self._ref_audio:
+            try:
+                self._voice_id = self._register_local_voice()
+            except Exception as e:
+                logger.warning(
+                    "omnivoice: failed to auto-register ref_audio %s: %s",
+                    self._ref_audio, e,
+                )
         mode = (
             "voice_clone" if self._voice_id
             else "voice_design" if self._instruct
@@ -225,6 +242,73 @@ class OmniVoiceTTSProvider:
             return None
 
     # ── internals ────────────────────────────────────────────────────────
+
+    def _register_local_voice(self) -> str | None:
+        """POST the local reference audio to /v1/voices and return the id.
+        Re-uses a deterministic id derived from the file path + mtime so
+        repeated restarts hit the server's existing cached voice instead of
+        re-uploading.
+        """
+        import hashlib
+        import os
+
+        path = self._ref_audio
+        if not path or not os.path.isfile(path):
+            logger.warning("omnivoice: ref_audio path not found: %s", path)
+            return None
+
+        if self._auto_voice_id:
+            voice_id = self._auto_voice_id
+        else:
+            try:
+                mtime = int(os.path.getmtime(path))
+            except Exception:
+                mtime = 0
+            stem = os.path.splitext(os.path.basename(path))[0]
+            stem = re.sub(r"[^A-Za-z0-9_\-]", "_", stem)[:32] or "clone"
+            digest = hashlib.sha1(
+                f"{os.path.abspath(path)}|{mtime}".encode("utf-8")
+            ).hexdigest()[:8]
+            voice_id = f"gabriel_{stem}_{digest}"
+
+        # quick GET to see if it already exists, skip upload if so.
+        try:
+            with httpx.Client(timeout=10.0) as c:
+                r = c.get(f"{self._base_url}/v1/voices")
+                if r.status_code == 200:
+                    voices = (r.json() or {}).get("voices", [])
+                    if any(v.get("voice_id") == voice_id for v in voices):
+                        logger.info(
+                            "omnivoice: reusing already-registered voice '%s'",
+                            voice_id,
+                        )
+                        return voice_id
+        except Exception as e:
+            logger.debug("omnivoice list voices precheck failed: %s", e)
+
+        logger.info(
+            "omnivoice: registering voice '%s' from %s", voice_id, path,
+        )
+        with open(path, "rb") as f:
+            files = {"audio": (os.path.basename(path), f, "application/octet-stream")}
+            data = {"voice_id": voice_id}
+            if self._ref_text:
+                data["ref_text"] = self._ref_text
+            with httpx.Client(timeout=120.0) as c:
+                resp = c.post(
+                    f"{self._base_url}/v1/voices", files=files, data=data,
+                )
+        if resp.status_code == 409:
+            # already exists with this id, fine
+            logger.info("omnivoice: voice '%s' already registered", voice_id)
+            return voice_id
+        if resp.status_code not in (200, 201):
+            raise RuntimeError(
+                f"register voice failed: {resp.status_code} {resp.text[:200]}"
+            )
+        out_id = (resp.json() or {}).get("voice_id", voice_id)
+        logger.info("omnivoice: registered voice '%s'", out_id)
+        return out_id
 
     def _ensure_async_tasks(self):
         if self._async_tasks:
