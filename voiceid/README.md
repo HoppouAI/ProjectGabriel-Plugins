@@ -43,18 +43,6 @@ plugins:
     similarity_threshold: 0.75       # cosine similarity needed to match
     buffer_seconds: 5.0              # how much recent audio to keep
     min_audio_seconds: 1.5           # need at least this much speech to embed
-
-    # auto-announce -- if on, plugin watches for the rising edge of
-    # speech and pushes "[System: current speaker is X]" inline with the
-    # audio via the host's send_realtime_text path, so the model sees
-    # the label as part of the same turn as the audio. Works on both
-    # 2.5 native-audio and 3.1 flash-live models.
-    auto_announce: true
-    announce_delay_seconds: 1.6      # wait this long after speech start before identifying
-    announce_cooldown_seconds: 8.0   # min gap between announcements
-    energy_threshold: 500.0          # int16 rms above this counts as voiced
-    silence_gap_seconds: 0.8         # this much silence resets the edge detector
-    announce_unknown: false          # also announce unknown speakers (off by default)
 ```
 
 Raise `similarity_threshold` if you get false matches, lower it if it

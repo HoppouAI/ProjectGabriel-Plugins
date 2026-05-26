@@ -1,7 +1,7 @@
 name: voiceid
-version: 0.2.0
+version: 0.2.1
 api_version: 3
-description: "Voice fingerprinting. AI can save a voice under a username and ask who is currently speaking. Optional auto-announce labels the speaker inline with their audio."
+description: "Voice fingerprinting. AI can save a voice under a username and ask who is currently speaking."
 author: HoppouAI
 enabled: true
 entry: __init__.py
