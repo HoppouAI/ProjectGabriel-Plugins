@@ -51,11 +51,53 @@ class VoiceRecognizer:
         self._buf_lock = threading.Lock()
         self._last_chunk_at: float = 0.0
 
+        # speech-start edge detector state
+        self._speech_active: bool = False
+        self._last_voiced_at: float = 0.0
+        self._on_speech_start: Any = None  # callable() set by plugin
+        self._energy_threshold: float = 500.0  # int16 RMS, tuned for typical mic
+        self._silence_gap_seconds: float = 0.8  # silence needed to "reset"
+
         # voices: name -> {"embedding": np.ndarray(256,), "created_at": float, "sample_count": int}
         self._voices: dict[str, dict[str, Any]] = {}
         self._voices_path = self.data_dir / "voices.npz"
         self._meta_path = self.data_dir / "voices.json"
         self._load()
+
+    # ---- speech edge detector --------------------------------------------
+
+    def set_speech_start_callback(self, fn, energy_threshold: float = 500.0, silence_gap_seconds: float = 0.8):
+        """Register a callback fired on the rising edge of speech (first
+        voiced chunk after >silence_gap_seconds of silence). Callback
+        runs on the audio thread, keep it fast or schedule work."""
+        self._on_speech_start = fn
+        self._energy_threshold = float(energy_threshold)
+        self._silence_gap_seconds = float(silence_gap_seconds)
+
+    def _update_speech_state(self, samples: np.ndarray):
+        if self._on_speech_start is None:
+            return
+        # cheap RMS in int16 space
+        if samples.size == 0:
+            return
+        rms = float(np.sqrt(np.mean(samples.astype(np.float32) ** 2)))
+        now = time.time()
+        if rms >= self._energy_threshold:
+            if not self._speech_active:
+                # rising edge: but only if we've had enough silence first
+                if (now - self._last_voiced_at) >= self._silence_gap_seconds:
+                    self._speech_active = True
+                    try:
+                        self._on_speech_start()
+                    except Exception as e:
+                        logger.debug(f"on_speech_start callback errored: {e}")
+                else:
+                    # too soon after last voiced chunk, treat as continuation
+                    self._speech_active = True
+            self._last_voiced_at = now
+        else:
+            if self._speech_active and (now - self._last_voiced_at) >= self._silence_gap_seconds:
+                self._speech_active = False
 
     # ---- model loading ----------------------------------------------------
 
@@ -101,6 +143,8 @@ class VoiceRecognizer:
         with self._buf_lock:
             self._buf.extend(samples.tolist())
             self._last_chunk_at = time.time()
+        # edge detector runs outside the buf lock, only reads samples
+        self._update_speech_state(samples)
 
     def _snapshot_float32(self) -> np.ndarray:
         with self._buf_lock:
