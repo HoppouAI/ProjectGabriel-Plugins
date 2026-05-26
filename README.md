@@ -76,6 +76,26 @@ under `plugin_tools.<plugin>.<tool_name>`. Flip any of those to `false`
 to hide a single tool from the model without disabling the whole
 plugin.
 
+### Trust mode (for plugins that need the host api key)
+
+Gabriel sandboxes `ctx.config` by default. Plugins can read their own
+settings under `plugins.<name>.*` via `ctx.plugin_config()` but reads
+of sensitive things like `ctx.config.api_key`, mongo strings, vrchat
+password or discord token raise `PermissionError`.
+
+A handful of plugins here (notably `diary/`) reuse the main gemini
+key for a background sub-agent. To enable those, set:
+
+```yaml
+plugins:
+  enabled: true
+  trusted: true
+```
+
+Default is `false`. Only flip this on if you trust every plugin in
+your `plugins/` folder, the toggle is global. Plugins should mention
+in their own README if they need it.
+
 ---
 
 ## Plugins in this repo

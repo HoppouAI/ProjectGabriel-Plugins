@@ -60,6 +60,11 @@ flipping between 24h and 12h. Parser is lenient: hand edits and missing fields a
 
 - Requires `privacy.save_conversations: true` in the main `config.yml`,
   otherwise no transcripts are written and the diary stays empty.
+- **Requires `plugins.trusted: true` in `config.yml`.** The diary
+  sub-agent reuses the host's gemini api key, which is sandboxed
+  away from plugins by default. Without trust mode you'll see
+  `plugin 'diary' is not allowed to read sensitive config attribute
+  'api_key'` in the logs and the scheduler will skip every tick.
 - The diary is meant to capture **vibes and threads** that the structured
   memory tools miss. Names, ongoing jokes, how people made you feel.
 - The plugin never edits or deletes past entries, only appends new ones.
