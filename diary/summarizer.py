@@ -1,6 +1,6 @@
 """Sub-agent that turns recent VRChat session transcripts into a diary entry.
 
-Uses gemini-3.1-flash-lite-preview, async, returns a parsed DiaryEntry
+Uses gemini-3.1-flash-lite, async, returns a parsed DiaryEntry
 ready to append. Stays out of the host event loop, the scheduler runs
 this on the side.
 """
@@ -20,7 +20,7 @@ from .diary import DiaryEntry, DiaryStore, now_written_str, today_str
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "gemini-3.1-flash-lite-preview"
+DEFAULT_MODEL = "gemini-3.1-flash-lite"
 
 # how much of each transcript to keep, per side (we strip system instruction
 # entirely and clip very long sessions so the sub-agent doesnt drown in tokens)

@@ -2,7 +2,7 @@
 
 Spins up a DiaryStore + DiaryScheduler, registers four tools (read, search,
 list, force-update). Background scheduler ticks every couple hours and feeds
-the most recent VRChat session transcripts through gemini-3.1-flash-lite-preview
+the most recent VRChat session transcripts through gemini-3.1-flash-lite
 to produce a first person diary entry, appended to `data/plugins/diary/gabriel.diary`.
 """
 from __future__ import annotations

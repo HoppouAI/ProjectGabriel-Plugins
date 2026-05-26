@@ -9,7 +9,7 @@ it needs context the structured memory system would not capture.
 
 - Background scheduler runs every 2 hours (configurable) inside the host event loop.
 - Each tick gathers the **last N session transcripts from today** (default 5) from `data/conversations/`.
-- Passes them to `gemini-3.1-flash-lite-preview` (configurable) along with any
+- Passes them to `gemini-3.1-flash-lite` (configurable) along with any
   earlier diary entries from today, so the new entry builds forward instead of
   repeating itself.
 - Writes a structured entry to `data/plugins/diary/gabriel.diary`.
@@ -41,7 +41,7 @@ plugins:
     enabled: true
     interval_hours: 2          # how often the background scheduler runs
     max_sessions: 5            # how many recent today-sessions to summarize per tick
-    model: "gemini-3.1-flash-lite-preview"
+    model: "gemini-3.1-flash-lite"
     initial_delay_seconds: 300 # warmup delay after startup before first tick
     filename: "gabriel.diary"  # name of the diary file under data/plugins/diary/
     conversation_dir: "data/conversations"  # where session transcripts live
