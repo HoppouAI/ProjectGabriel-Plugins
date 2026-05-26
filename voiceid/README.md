@@ -27,7 +27,7 @@ embeddings.
 This plugin needs resemblyzer + numpy. From the repo root:
 
 ```
-uv pip install resemblyzer numpy
+.\bin\uv.exe pip install resemblyzer numpy
 ```
 
 First call to any tool will download the encoder weights (~17MB) and

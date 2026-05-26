@@ -10,7 +10,7 @@ playback can start before generation finishes.
 2. Install OmniVoice and start the server somewhere:
 
    ```bash
-   pip install omnivoice[serve]
+   .\bin\uv.exe pip install omnivoice[serve]
    omnivoice-serve --model k2-fsa/OmniVoice
    ```
 

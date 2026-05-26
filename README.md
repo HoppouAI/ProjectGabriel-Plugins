@@ -32,42 +32,76 @@ Read that first if you want to write your own.
 ## Installing a plugin
 
 Plugins live in the `plugins/` folder of your Gabriel install (the
-`ProjectGabriel-Remaster` repo, NOT this one). To install one of these:
+`ProjectGabriel-Remaster` repo, NOT this one). Easiest workflow is to
+clone this repo right next to your Gabriel install so the paths stay
+short:
 
-1. Clone or download this repo somewhere.
-2. Copy the plugin folder you want into your Gabriel install:
+```
+your-projects/
+  ProjectGabriel-Remaster/    <- your gabriel install
+  ProjectGabriel-Plugins/     <- this repo, cloned next to it
+```
+
+Then from a PowerShell terminal inside `ProjectGabriel-Remaster/`:
+
+1. **Copy the plugin folder** you want into your `plugins/` dir.
 
    ```powershell
-   # example, copy the diary plugin
-   Copy-Item -Recurse E:\path\to\ProjectGabriel-Plugins\diary `
-                       E:\path\to\ProjectGabriel-Remaster\plugins\diary
+   # one liner, swap `diary` for whatever plugin you want
+   Copy-Item -Recurse -Force ..\ProjectGabriel-Plugins\diary plugins\
    ```
 
-3. Open the copied `plugin.yml` and make sure `enabled: true`.
-4. If the plugin lists `requirements:` in `plugin.yml`, install them
-   into your Gabriel venv:
+   To install all of them in one go:
 
    ```powershell
-   .venv\Scripts\python.exe -m pip install <each requirement>
+   Get-ChildItem ..\ProjectGabriel-Plugins -Directory |
+     Where-Object { Test-Path "$($_.FullName)\plugin.yml" } |
+     ForEach-Object { Copy-Item -Recurse -Force $_.FullName plugins\ }
    ```
 
-   The host warns about missing deps but never auto-installs. Some
-   plugins ship with no extra deps.
+2. **Make sure it's enabled.** Open `plugins\<name>\plugin.yml` and
+   confirm `enabled: true` (it usually already is).
 
-5. Add any optional config to `config.yml` under `plugins.<name>:`
-   (see each plugin's own README for what knobs it exposes).
-6. Restart Gabriel. You should see something like:
+3. **Install python deps**, if the plugin's `plugin.yml` lists any
+   under `requirements:`. Gabriel ships `uv` in `bin\` so you don't
+   need a system pip:
+
+   ```powershell
+   # one package
+   .\bin\uv.exe pip install resemblyzer
+
+   # everything for a specific plugin in one shot
+   .\bin\uv.exe pip install (Get-Content plugins\voiceid\plugin.yml |
+       Select-String '^\s*-\s' | ForEach-Object { ($_ -split '-\s+')[1].Trim() })
+   ```
+
+   The host warns about missing deps on startup but never
+   auto-installs. A lot of plugins ship with no extra deps.
+
+4. **Optional config.** Each plugin's own README lists its knobs.
+   Add them under `plugins.<name>:` in your `config.yml`. Plugins
+   that need raw access to the host's gemini key (like `diary`) also
+   need `plugins.trusted: true`, see the trust mode section below.
+
+5. **Restart Gabriel.** You should see something like:
 
    ```
    [plugins] loaded plugin 'diary' v1.0.0
    ```
 
-   in the log. If a tool is registered, it will also show up in
-   `config/tools.yml` under `plugin_tools.<name>` set to `true`.
+   in the log. If the plugin registers tools, they show up in
+   `config\tools.yml` under `plugin_tools.<name>` set to `true` after
+   the first run.
 
-That's it. To remove a plugin just delete its folder and restart, or
-flip `enabled: false` in its `plugin.yml` to keep it on disk but skip
-loading.
+To remove a plugin: delete its folder under `plugins\` and restart.
+To temporarily disable one without deleting: flip `enabled: false` in
+its `plugin.yml`.
+
+### Updating
+
+Plugins update by re-copying from this repo. Run `git pull` here,
+then re-run the copy command from step 1. Your plugin config in
+`config.yml` stays put.
 
 ### Per tool toggles
 

@@ -28,7 +28,7 @@ asking the client to fire). The client only really needs PT2.
 
 1. Copy the `duo_song/` folder into the host's `plugins/` directory on
    both machines.
-2. `pip install pygame` on both.
+2. `.\bin\uv.exe pip install pygame` on both.
 3. Drop your duet pairs into `sfx/music/duo/` on both machines using
    the `<title> PT1.<ext>` / `<title> PT2.<ext>` naming. Filenames must
    match between the two machines.

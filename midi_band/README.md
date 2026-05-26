@@ -35,7 +35,7 @@ On every machine that will be in the band:
 
 2. Install the Python deps:
    ```powershell
-   .venv\Scripts\python.exe -m pip install mido pyfluidsynth
+   .\bin\uv.exe pip install mido pyfluidsynth
    ```
 
 3. Install the **native** fluidsynth library (pyfluidsynth is just
