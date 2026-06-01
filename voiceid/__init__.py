@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 class VoiceIDPlugin(Plugin):
     name = "voiceid"
-    version = "0.2.1"
+    version = "0.2.2"
     api_version = 3
     description = "Voice fingerprinting via Resemblyzer, AI can save voices to usernames and identify the current speaker"
     author = "HoppouAI"
@@ -41,6 +41,28 @@ class VoiceIDPlugin(Plugin):
             "mic_chunk",
             lambda data, sample_rate: recognizer.feed_audio(data, sample_rate),
         )
+
+        def voiceid_prompt():
+            return (
+                "**Voice Identification:** Run `identifyCurrentSpeaker` whenever someone speaks "
+                "to you so you can recognize their voice and know who is speaking. If the result is "
+                "unknown, you should ask for their name."
+            )
+
+        ctx.register_prompt_contributor("voiceid_instruction", voiceid_prompt)
+        if hasattr(ctx, "discord") and ctx.discord:
+            ctx.discord.register_prompt_contributor("voiceid_instruction", voiceid_prompt)
+
+        # Preload the voiceid encoder in a background thread so it's fully ready at startup without blocking
+        import threading
+        def preload():
+            try:
+                recognizer._ensure_encoder()
+                ctx.logger.info("voiceid: background preloading of model complete")
+            except Exception as e:
+                ctx.logger.warning(f"voiceid: failed to preload model: {e}")
+
+        threading.Thread(target=preload, daemon=True).start()
 
         ctx.logger.info(
             f"voiceid ready -- {len(recognizer.list_voices())} saved voice(s), "

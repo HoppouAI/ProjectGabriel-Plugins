@@ -41,14 +41,11 @@ class VoiceIDTools(BaseTool):
             types.FunctionDeclaration(
                 name="identifyCurrentSpeaker",
                 description=(
-                    "Figure out who is currently talking by comparing their voice against your "
-                    "saved fingerprints. Returns the matched username and confidence, or "
-                    "'unknown' with instructions to fall back on vision.\n\n"
-                    "**Invocation Condition:** Call when you genuinely don't know who is "
-                    "addressing you and it matters for the response. Do not call this every "
-                    "single turn, only when speaker identity is actually unclear. If it returns "
-                    "'unknown', look at the image/vision context provided to figure out who "
-                    "is speaking, or ask their name."
+                    "Identify the speaker of the current speech fragment using saved voice "
+                    "fingerprints. Returns the matched username and confidence.\n\n"
+                    "**Invocation Condition:** Call this every single time someone speaks to "
+                    "you to verify who is speaking and confirm their identity. Do not skip calling "
+                    "this, as you need to know who is addressing you for every turn."
                 ),
                 parameters={"type": "OBJECT", "properties": {}},
             ),
