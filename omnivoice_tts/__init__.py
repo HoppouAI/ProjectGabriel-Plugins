@@ -40,7 +40,7 @@ def _load_local_config() -> dict:
 
 class OmniVoiceTTSPlugin(Plugin):
     name = "omnivoice_tts"
-    version = "0.1.4"
+    version = "0.1.5"
     description = "OmniVoice TTS provider (k2-fsa, GPU diffusion, voice cloning + design, 600+ languages)"
     author = "HoppouAI"
 

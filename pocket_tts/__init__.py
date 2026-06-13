@@ -50,7 +50,7 @@ def _coerce_float_opt(v):
 
 class PocketTTSPlugin(Plugin):
     name = "pocket_tts"
-    version = "0.1.4"
+    version = "0.1.5"
     description = "Pocket TTS provider (Kyutai, CPU-only, voice cloning)"
     author = "HoppouAI"
 

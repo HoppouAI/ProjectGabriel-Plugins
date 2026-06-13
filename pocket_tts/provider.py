@@ -66,6 +66,18 @@ def _strip_emojis(text: str) -> str:
     return re.sub(r"  +", " ", cleaned).strip()
 
 
+# pocket_tts has no concept of nonverbal tags, so strip anything inside
+# square brackets the AI sticks in (eg [amazed], [laughs], [happy]).
+# bounded length so we dont accidentally chew through a real sentence
+# that just happens to have brackets around a long quote.
+_BRACKET_TAG_RE = re.compile(r"\[[^\[\]]{1,40}\]")
+
+
+def _strip_bracket_tags(text: str) -> str:
+    cleaned = _BRACKET_TAG_RE.sub(" ", text)
+    return re.sub(r"  +", " ", cleaned).strip()
+
+
 # rough heuristic for "this looks like a built in voice name", anything
 # without a path separator, scheme, or file extension. lets the user
 # write voice: "alba" instead of voice: "alba" with extra ceremony.
@@ -515,6 +527,7 @@ class PocketTTSProvider:
                     if self._interrupted or not self._running:
                         break
                     s = _strip_emojis(sentence)
+                    s = _strip_bracket_tags(s)
                     if s:
                         logger.info("pocket_tts sentence: %r", s[:80])
                         self._sentence_queue.put(s)

@@ -81,6 +81,32 @@ def _strip_emojis(text: str) -> str:
     return re.sub(r"  +", " ", cleaned).strip()
 
 
+# nonverbal tags omnivoice's tokenizer actually understands (see
+# omnivoice.models.omnivoice._NONVERBAL_PATTERN). anything else inside
+# square brackets is something the AI invented (eg [amazed], [happy])
+# and would just get spoken letter by letter, so strip it.
+_OMNIVOICE_KEPT_TAGS = {
+    "laughter", "sigh",
+    "confirmation-en",
+    "question-en", "question-ah", "question-oh",
+    "question-ei", "question-yi",
+    "surprise-ah", "surprise-oh", "surprise-wa", "surprise-yo",
+    "dissatisfaction-hnn",
+}
+_BRACKET_TAG_RE = re.compile(r"\[([^\[\]]{1,40})\]")
+
+
+def _strip_unsupported_tags(text: str) -> str:
+    def repl(m):
+        inner = m.group(1).strip().lower()
+        if inner in _OMNIVOICE_KEPT_TAGS:
+            # keep, but normalize to lowercase the tokenizer expects
+            return f"[{inner}]"
+        return " "
+    cleaned = _BRACKET_TAG_RE.sub(repl, text)
+    return re.sub(r"  +", " ", cleaned).strip()
+
+
 # threshold below which we flip into "low vram" mode (more aggressive cache
 # clearing between sentences). Matches the server-side default.
 _LOW_VRAM_THRESHOLD_GB = 8.5
@@ -757,6 +783,7 @@ class OmniVoiceProvider:
                     if self._interrupted or not self._running:
                         break
                     s = _strip_emojis(sentence)
+                    s = _strip_unsupported_tags(s)
                     if s:
                         logger.info("omnivoice_tts sentence: %r", s[:80])
                         self._sentence_queue.put(s)
