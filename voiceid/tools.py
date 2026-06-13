@@ -23,9 +23,9 @@ class VoiceIDTools(BaseTool):
                     "**Invocation Condition:** Call this when someone tells you their name and "
                     "they are actively speaking, OR when you have visually identified who is "
                     "talking and want to remember their voice for next time. Call again with the "
-                    "same name later to refine the fingerprint, the system averages multiple "
-                    "captures. Do not call this without enough recent speech, the tool will "
-                    "tell you if the buffer is too short."
+                    "same name from a different moment to add another capture, multiple captures "
+                    "of the same person make recognition much more reliable. Do not call this "
+                    "without enough recent speech, the tool will tell you if the buffer is too short."
                 ),
                 parameters={
                     "type": "OBJECT",
@@ -41,14 +41,13 @@ class VoiceIDTools(BaseTool):
             types.FunctionDeclaration(
                 name="identifyCurrentSpeaker",
                 description=(
-                    "Figure out who is currently talking by comparing their voice against your "
-                    "saved fingerprints. Returns the matched username and confidence, or "
-                    "'unknown' with instructions to fall back on vision.\n\n"
-                    "**Invocation Condition:** Call when you genuinely don't know who is "
-                    "addressing you and it matters for the response. Do not call this every "
-                    "single turn, only when speaker identity is actually unclear. If it returns "
-                    "'unknown', look at the image/vision context provided to figure out who "
-                    "is speaking, or ask their name."
+                    "Identify the speaker of the current speech using saved voice fingerprints. "
+                    "Returns either a confident match (username + confidence) or unknown with "
+                    "a reason. If unknown, treat them as unknown, do not guess based on context. "
+                    "Just ask their name and call saveVoice when they answer.\n\n"
+                    "**Invocation Condition:** Call this every time someone speaks to you to "
+                    "verify who is speaking. Do not skip it, you need to know who is addressing "
+                    "you for every turn."
                 ),
                 parameters={"type": "OBJECT", "properties": {}},
             ),

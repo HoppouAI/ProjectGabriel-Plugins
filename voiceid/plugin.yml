@@ -1,10 +1,13 @@
 name: voiceid
-version: 0.3.3
+version: 0.4.0
 api_version: 3
-description: "Voice fingerprinting. AI can save a voice under a username and ask who is currently speaking."
+description: "Voice fingerprinting via SpeechBrain ECAPA-TDNN. AI saves voices under usernames and identifies the current speaker, with multi-embedding storage and a margin check so similar voices dont get confused."
 author: HoppouAI
 enabled: true
 entry: __init__.py
 requirements:
-  - resemblyzer
-  - numpy
+  - speechbrain>=1.0
+  - torch>=2.0
+  - torchaudio>=2.0
+  - numpy>=1.24
+  - scipy>=1.10
