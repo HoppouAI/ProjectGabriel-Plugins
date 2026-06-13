@@ -1,0 +1,54 @@
+# Standalone omnivoice_tts server config
+#
+# Copy to config.yml and tweak. The real config.yml is gitignored.
+
+# Network binding.
+server:
+  host: "0.0.0.0"
+  port: 8788
+  # Let clients send a config message at connect time to override voice
+  # / model / etc. Set to false to lock the server to whatever's in this
+  # file.
+  allow_overrides: true
+
+# All the OmniVoice knobs. Most of these have the same names as the
+# plugin's config.example.yml in the parent folder, see that file for
+# detailed comments.
+omnivoice_tts:
+  model: "k2-fsa/OmniVoice"
+  device: null         # null = auto detect (cuda > mps > cpu)
+  dtype: "float16"
+
+  # Voice. Pick at most one of ref_audio / instruct. Empty = auto voice
+  # mode, the plugin's anchor sentence trick keeps it consistent.
+  ref_audio: null
+  ref_text: null
+  instruct: null
+  language: null
+
+  num_step: 16
+  guidance_scale: 2.0
+  speed: null
+  denoise: true
+
+  stream_batch_size: 2
+  anchor_first_sentence: true
+  first_chunk_min_samples: 1920
+
+  use_flash_attn: false
+  use_cuda_graphs: false
+  max_graph_cache: 8
+
+  asr_model: "openai/whisper-base"
+  cache_voice: true
+  low_vram: false
+
+  # Sample rate the server resamples its output to before sending. The
+  # remote client expects this to match what the host audio mixer wants
+  # (default 24000 matches the omnivoice native rate). Drop to 16000 if
+  # the network is the bottleneck.
+  output_sample_rate: 24000
+
+  # Where voice clone caches and downloaded models land. Defaults to
+  # ./data next to this script.
+  data_dir: null

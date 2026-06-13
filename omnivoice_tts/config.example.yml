@@ -119,3 +119,37 @@ cache_voice: true
 # sentences) regardless of detected vram. The plugin already turns this
 # on automatically for GPUs under 8.5 GB.
 low_vram: false
+
+# ── remote mode ──────────────────────────────────────────────────────
+#
+# If set, the plugin skips loading the model locally and just streams
+# text up / audio back from a standalone server. Useful when Gabriel
+# runs on a laptop or non-gpu box and you have a separate machine for
+# inference. See omnivoice_tts/standalone/README.md for setup.
+#
+# When `remote.url` is set, every other key above is ignored on this
+# machine. Configure the voice / model / dtype on the SERVER side
+# instead.
+remote:
+  # WebSocket URL to the server. Leave null / unset to use local mode.
+  # Example: "ws://192.168.1.10:8788/tts"
+  url: null
+
+  # Auto-reconnect on transient drops. Off = bail out and log on first
+  # connection failure, you'd have to restart the host to retry.
+  reconnect: true
+
+  # Connect / handshake timeout in seconds.
+  timeout_seconds: 30
+
+  # Heartbeat ping interval in seconds. Helps keep the socket alive
+  # through NAT / load balancers that idle-timeout.
+  heartbeat_seconds: 20
+
+  # Optional: dict of engine overrides to send to the server on connect.
+  # Only honored if the server was started with --allow-overrides
+  # (default). Useful for picking a different voice without restarting
+  # the server. Same key names as the engine knobs above.
+  # send_voice_override:
+  #   instruct: "female, low pitch, british accent"
+  send_voice_override: null

@@ -1,0 +1,24 @@
+.venv/
+.venv*/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+build/
+dist/
+.uv.lock.bak
+
+# real config (uses config.example.yml as the template)
+config.yml
+
+# model + voice cache the engine drops here at runtime
+data/
+ecapa_model/
+voices/
+
+# torch / hf caches if the user routes them locally
+.hf_cache/
+.torch_cache/
+
+# logs
+*.log

@@ -10,6 +10,10 @@ Activate with:
 
 Config under `plugins.omnivoice_tts.*` in config.yml (or in
 `plugins/omnivoice_tts/config.yml`, gitignored, see config.example.yml).
+
+Set `plugins.omnivoice_tts.remote.url` to a ws://host:port/tts to skip
+the local model entirely and stream audio from a standalone server (see
+the standalone/ folder for that).
 """
 import logging
 import threading
@@ -20,6 +24,7 @@ import yaml
 from src.plugins import Plugin, PluginContext
 
 from .provider import OmniVoiceProvider, _autodetect_device
+from .remote_client import OmniVoiceRemoteProvider
 
 logger = logging.getLogger(__name__)
 
@@ -40,13 +45,35 @@ def _load_local_config() -> dict:
 
 class OmniVoiceTTSPlugin(Plugin):
     name = "omnivoice_tts"
-    version = "0.1.8"
-    description = "OmniVoice TTS provider (k2-fsa, GPU diffusion, voice cloning + design, 600+ languages)"
+    version = "0.2.0"
+    description = "OmniVoice TTS provider (k2-fsa, GPU diffusion, voice cloning + design, 600+ languages, optional remote-server mode)"
     author = "HoppouAI"
 
     def setup(self, ctx: PluginContext):
         local_cfg = _load_local_config()
         data_dir = ctx.data_dir()
+
+        # remote mode: if remote.url is set we skip the local model
+        # entirely and ship a thin ws client to the host instead. local
+        # config wins over the host config so people can keep their
+        # remote settings in plugins/omnivoice_tts/config.yml.
+        remote_cfg = (local_cfg.get("remote")
+                      or ctx.plugin_config("remote", default=None)
+                      or {})
+        remote_url = str(remote_cfg.get("url") or "")
+
+        if remote_url:
+            def factory(config):
+                return OmniVoiceRemoteProvider(
+                    config, local_overrides=local_cfg, data_dir=data_dir,
+                )
+            ctx.register_tts("omnivoice_tts", factory)
+            ctx.logger.info(
+                "omnivoice_tts registered in REMOTE mode (url=%s). "
+                "skipping local warmup. set tts.external_provider: omnivoice_tts to use it.",
+                remote_url,
+            )
+            return
 
         def factory(config):
             return OmniVoiceProvider(

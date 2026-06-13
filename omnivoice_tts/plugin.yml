@@ -1,5 +1,5 @@
 name: omnivoice_tts
-version: 0.1.8
+version: 0.2.0
 api_version: 2
 author: HoppouAI
 description: >-
@@ -8,7 +8,8 @@ description: >-
   voice design (gender, age, pitch, accent), and fast inference (RTF as
   low as 0.025). Streams sentence by sentence with batch generation for
   GPU saturation, plus an anchor sentence trick to keep auto-voice mode
-  consistent across a full reply.
+  consistent across a full reply. Optional remote mode lets you run the
+  model on another machine and stream audio over a WebSocket.
 enabled: true
 requirements:
   - omnivoice>=0.1.5
@@ -18,3 +19,4 @@ requirements:
   - scipy>=1.10
   - stream2sentence>=0.2
   - nltk>=3.8
+  - websockets>=12

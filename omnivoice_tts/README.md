@@ -336,6 +336,38 @@ The full set of keys is documented inline in [config.example.yml](config.example
 | `asr_model` | `openai/whisper-base` | Whisper model for auto-transcribing `ref_audio`. Dropped from vram right after the clone prompt is built. |
 | `cache_voice` | `true` | Cache voice clone prompts to disk. |
 | `low_vram` | `false` | Force the aggressive `empty_cache` path. |
+| `remote.url` | `null` | If set, skip local model entirely and stream from a standalone server. |
+| `remote.reconnect` | `true` | Auto-reconnect on transient drops in remote mode. |
+| `remote.timeout_seconds` | `30` | Connect / handshake timeout in remote mode. |
+| `remote.heartbeat_seconds` | `20` | Ping interval to keep the socket alive in remote mode. |
+| `remote.send_voice_override` | `null` | Optional dict of engine knobs to push to the server at connect. |
+
+---
+
+## Remote mode (run the model on another machine)
+
+If your Gabriel box doesn't have a GPU, or you want to keep the model on a beefy server and run Gabriel itself on a laptop / NUC / mac mini, you can run the model in a standalone WebSocket server and point the plugin at it.
+
+```yaml
+plugins:
+  omnivoice_tts:
+    remote:
+      url: "ws://YOUR.SERVER.IP:8788/tts"
+      reconnect: true
+```
+
+When `remote.url` is set the plugin skips the local model load entirely and just streams text up + audio back over the WS. Every other engine knob is ignored on the client side, you configure the voice / dtype / etc on the SERVER's config.yml instead. That way the voice lives in one place.
+
+To set up the server, see [standalone/README.md](standalone/README.md). Short version:
+
+```powershell
+cd plugins\omnivoice_tts\standalone
+Copy-Item config.example.yml config.yml
+notepad config.yml          # set voice, port, etc
+.\run.bat                   # uv sync then uv run server.py
+```
+
+The standalone folder is self-contained, you can copy it to a different PC and run it without dragging the rest of Gabriel along.
 
 ---
 

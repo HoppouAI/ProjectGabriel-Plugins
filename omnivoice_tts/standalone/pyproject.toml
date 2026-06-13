@@ -1,0 +1,48 @@
+[project]
+name = "omnivoice-tts-standalone"
+version = "0.1.0"
+description = "Standalone WebSocket server for the omnivoice_tts plugin. Run OmniVoice on one machine and stream audio to a remote Project Gabriel instance."
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+    { name = "HoppouAI" },
+]
+license = { text = "AGPL-3.0-or-later" }
+keywords = ["tts", "omnivoice", "diffusion", "websocket", "fastapi", "project-gabriel"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Sound/Audio :: Speech",
+]
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "websockets>=12",
+    "pyyaml>=6",
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "stream2sentence>=0.2",
+    "nltk>=3.8",
+    "omnivoice>=0.1.5",
+    # torch / torchaudio are not pinned here, you should install the
+    # right cuda build for your system first. eg:
+    #   uv pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu128
+    # then `uv sync` to grab the rest.
+    "torch>=2.5",
+    "torchaudio>=2.5",
+]
+
+[project.scripts]
+omnivoice-tts-server = "server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+include = ["server.py", "engine.py", "perf.py", "protocol.py"]
+
+[tool.uv]
+package = false
