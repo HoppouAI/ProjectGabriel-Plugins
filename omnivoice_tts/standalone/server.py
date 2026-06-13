@@ -88,8 +88,12 @@ def _build_provider(server_config: dict, overrides_from_client: dict | None = No
             if v is not None:
                 cfg[k] = v
 
-    sr = int(cfg.pop("output_sample_rate", 24000))
-    data_dir = Path(cfg.pop("data_dir", str(_HERE / "data")))
+    sr = int(cfg.pop("output_sample_rate", None) or 24000)
+    data_dir = Path(cfg.pop("data_dir", None) or str(_HERE / "data"))
+
+    # strip None values so the providers cfg() doesnt see explicit nulls
+    # from the yaml (eg ref_audio: null) as real values
+    cfg = {k: v for k, v in cfg.items() if v is not None}
 
     host_cfg = {
         "plugins": {"omnivoice_tts": cfg},
@@ -540,12 +544,18 @@ def _resolve_server_config(args) -> tuple[dict, str, int, bool]:
     if args.output_sample_rate:
         server["output_sample_rate"] = args.output_sample_rate
 
-    # sensible defaults so an empty config still boots
-    server.setdefault("model", "k2-fsa/OmniVoice")
-    server.setdefault("device", _autodetect_device())
-    server.setdefault("dtype", "float16")
-    server.setdefault("output_sample_rate", 24000)
-    server.setdefault("data_dir", str(_HERE / "data"))
+    # sensible defaults so an empty config still boots. fill in for both
+    # missing keys AND keys explicitly set to null in yaml.
+    _defaults = {
+        "model": "k2-fsa/OmniVoice",
+        "device": _autodetect_device(),
+        "dtype": "float16",
+        "output_sample_rate": 24000,
+        "data_dir": str(_HERE / "data"),
+    }
+    for k, v in _defaults.items():
+        if server.get(k) in (None, ""):
+            server[k] = v
 
     return server, host, port, allow_overrides
 
