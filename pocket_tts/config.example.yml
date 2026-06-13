@@ -1,0 +1,75 @@
+# Pocket TTS plugin local config. Optional, every key here can also live
+# in your main config.yml under plugins.pocket_tts. Values in this file
+# override values in config.yml.
+#
+# Copy this to plugins/pocket_tts/config.yml and tweak. The real config.yml
+# is gitignored.
+
+# Which language model to load. Maps directly to pocket_tts.TTSModel.load_model
+# `language=` argument. Options:
+#   english             (default, alias for english_2026-04)
+#   english_2026-04     (latest distilled english, fastest)
+#   english_2026-01     (older english model)
+#   french_24l          (24 layer non-distilled, slower but higher quality)
+#   german_24l
+#   italian_24l
+#   spanish_24l
+#   portuguese_24l
+language: "english"
+
+# The voice. ONE of:
+#   - a built in voice name like "alba" (en), "marius" (en), "fantine" (en),
+#     "estelle" (fr), "giovanni" (it), "lola" (es), "juergen" (de), "rafael" (pt)
+#   - an absolute path to a local audio clip (.wav, .mp3, .flac, .ogg)
+#     that you want to clone, ~10-30s of clean speech is plenty
+#   - an absolute path to a previously exported .safetensors voice state
+#   - a hf:// or https:// URL to an audio clip
+#
+# Local audio files get extracted into a model state and cached on disk
+# under data/plugins/pocket_tts/voices/<stem>_<hash>.safetensors so reruns
+# skip the slow extraction step. The cache is keyed on the file path,
+# its mtime, and the language model, so editing or replacing the file
+# triggers a fresh extraction automatically.
+voice: "alba"
+
+# Apply int8 quantization at load time. Roughly half the memory, very small
+# quality drop, slightly faster on most CPUs. Off by default to match
+# upstream defaults exactly.
+quantize: false
+
+# Skip past the first ~10ms of any first chunk so the receiver doesn't
+# stutter on tiny initial frames. Set to 0 to disable. Value is in samples
+# at the model's native rate (24000 Hz).
+first_chunk_min_samples: 1920
+
+# Sampling temperature, 0.0 - 1.0. Lower is more consistent, higher is
+# more expressive but can drift. Default matches upstream.
+temperature: 0.7
+
+# LSD (Lagrangian Self Distillation) decode steps. 1 is fastest and is
+# what the distilled english model is trained for. Bump to 3-5 only if
+# you're using a 24l variant and want extra quality.
+lsd_decode_steps: 1
+
+# End of sequence threshold. Lower = stops talking sooner.
+eos_threshold: -4.0
+
+# Maximum value for noise sampling. Leave unset for default. Set to a
+# small float like 1.5 to clamp away rare extreme samples that can show
+# up as audible glitches on long generations.
+noise_clamp: null
+
+# How many extra audio frames to emit after the model signals EOS. Leave
+# unset to use the model's recommended default. Bumping this past the
+# default mainly hurts latency.
+frames_after_eos: null
+
+# Whether to truncate cloning audio longer than 30 seconds. Disable if
+# you want the full clip used as conditioning, leave on if your reference
+# clips are very long and you want fast loads.
+truncate_clone: false
+
+# Cache extracted voice states to disk for fast reload across restarts.
+# Set false if you're A/B testing different cleanup passes on the same
+# file path and don't want a stale cache.
+cache_voice: true

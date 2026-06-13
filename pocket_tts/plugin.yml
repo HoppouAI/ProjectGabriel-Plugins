@@ -1,0 +1,18 @@
+name: pocket_tts
+version: 0.1.0
+api_version: 2
+author: HoppouAI
+description: >-
+  Local CPU TTS provider backed by Kyutai Labs Pocket TTS. Runs entirely
+  on the CPU (no GPU, no server, no api keys), streams chunk by chunk,
+  and supports persistent voice cloning from a single audio file. Both
+  the built in voice catalog and full file based voice cloning are
+  exposed as one provider, switchable via config.
+enabled: true
+requirements:
+  - pocket-tts>=2.1
+  - torch>=2.5
+  - numpy>=1.24
+  - stream2sentence>=0.2
+  - nltk>=3.8
+  - safetensors>=0.4
