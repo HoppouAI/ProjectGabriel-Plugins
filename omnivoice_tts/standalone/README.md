@@ -132,6 +132,7 @@ CLI flags override anything in `config.yml`.
 | `--output-sample-rate HZ` | resample output before sending. default 24000 |
 | `--allow-overrides` / `--no-overrides` | allow / refuse per-client voice swaps |
 | `--no-warmup` | skip startup model warmup, load lazily on first connection instead |
+| `--ws-impl IMPL` | uvicorn ws backend: `auto` (default, prefers wsproto), `wsproto`, `websockets`, or `websockets-sansio`. switch if you see 403s |
 | `-v` | verbose logging |
 
 ## Hooking it up to Gabriel

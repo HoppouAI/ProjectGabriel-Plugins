@@ -591,6 +591,12 @@ def _build_parser():
                    help="Reject client config overrides, use server config only.")
     p.add_argument("--no-warmup", action="store_true",
                    help="Skip the startup warmup, load the model lazily on the first connection instead.")
+    p.add_argument("--ws-impl", dest="ws_impl",
+                   choices=["auto", "wsproto", "websockets", "websockets-sansio"],
+                   default="auto",
+                   help="Which uvicorn websocket impl to use. Default 'auto' prefers wsproto if available "
+                        "(wsproto is the most compat-friendly). Use 'websockets-sansio' if you've pinned a "
+                        "matching uvicorn/websockets pair.")
     p.add_argument("-v", "--verbose", action="store_true", help="Debug-level logs.")
     return p
 
@@ -631,11 +637,24 @@ def main():
     if sys.platform == "win32":
         signal.signal(signal.SIGINT, lambda *_: sys.exit(0))
 
+    # pin the ws impl to wsproto. uvicorns default `auto` picks the
+    # legacy `websockets` impl which 403s every connect with websockets
+    # >=14 (the new sansio API broke uvicorn<0.34). wsproto is rock
+    # solid and unaffected.
+    ws_impl = args.ws_impl
+    if ws_impl == "auto":
+        try:
+            import wsproto  # noqa: F401
+            ws_impl = "wsproto"
+        except ImportError:
+            ws_impl = "auto"  # let uvicorn figure it out
+
     uvicorn.run(
         app,
         host=host,
         port=port,
         log_level="debug" if args.verbose else "info",
+        ws=ws_impl,
         ws_max_size=16 * 1024 * 1024,
         access_log=False,
     )
