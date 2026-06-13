@@ -165,6 +165,72 @@ def _to_mono_float_np(audio) -> np.ndarray:
     return arr
 
 
+def _free_torch_vram():
+    """Best-effort gc.collect + cuda empty_cache. Safe to call anywhere."""
+    try:
+        import gc
+        gc.collect()
+    except Exception:
+        pass
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            try:
+                torch.cuda.ipc_collect()
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
+def _cuda_vram_used_gb(device: str | None) -> float | None:
+    """Return current allocated cuda memory in GB for a device string, or None."""
+    try:
+        import torch
+        if not torch.cuda.is_available():
+            return None
+        if device and device.startswith("cuda"):
+            idx = int(device.split(":")[1]) if ":" in device else 0
+        else:
+            idx = 0
+        return torch.cuda.memory_allocated(idx) / (1024 ** 3)
+    except Exception:
+        return None
+
+
+def _unload_asr_model(model) -> bool:
+    """Drop the ASR pipeline off an OmniVoice model and free its vram.
+
+    Whisper is only used once, to transcribe the reference audio when
+    ref_text is missing. After the voice clone prompt is built, the
+    pipeline just sits around eating ~500 MB to 1 GB of vram. Nuke it.
+
+    Returns True if something was dropped, False if there was nothing
+    to unload (asr was never loaded).
+    """
+    pipe = getattr(model, "_asr_pipe", None)
+    if pipe is None:
+        return False
+
+    # null out the pipeline's internal handles so the underlying
+    # whisper / tokenizer / feature_extractor become collectable
+    for attr in ("model", "tokenizer", "feature_extractor",
+                 "image_processor", "processor"):
+        try:
+            setattr(pipe, attr, None)
+        except Exception:
+            pass
+
+    try:
+        model._asr_pipe = None
+    except Exception:
+        pass
+
+    _free_torch_vram()
+    return True
+
+
 class OmniVoiceProvider:
     # Process-wide warm cache. Lets a background warmup thread populate
     # the model + voice prompt before the first session, and lets a
@@ -481,6 +547,24 @@ class OmniVoiceProvider:
                 logger.info("omnivoice_tts: perf tweaks: %s", enabled)
 
             self._voice_clone_prompt = self._resolve_voice_clone_prompt()
+
+            # whisper is only used to transcribe ref_audio when ref_text is
+            # missing. once the clone prompt is built (or we decided we dont
+            # need one) the pipeline is dead weight. drop it.
+            try:
+                vram_before = _cuda_vram_used_gb(self._device)
+                dropped = _unload_asr_model(self._model)
+                if dropped:
+                    vram_after = _cuda_vram_used_gb(self._device)
+                    if vram_before is not None and vram_after is not None:
+                        logger.info(
+                            "omnivoice_tts: unloaded asr model (vram %.2f -> %.2f GB)",
+                            vram_before, vram_after,
+                        )
+                    else:
+                        logger.info("omnivoice_tts: unloaded asr model")
+            except Exception as e:
+                logger.debug("omnivoice_tts: asr unload failed: %s", e)
 
             # populate the warm cache so a session restart skips this work
             with self._warm_lock:
