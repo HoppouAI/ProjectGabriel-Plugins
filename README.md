@@ -79,7 +79,7 @@ Read that first.
 | [`duo_song/`](duo_song/) | Tools + Audio | Two Gabriel instances on the same LAN sing duets in sync, one half per machine. | `startDuoSong` |
 | [`midi_band/`](midi_band/) | Tools + Audio | A whole band of Gabriel instances plays a MIDI together over LAN via fluidsynth. Standalone client included. | `startMidiBand` |
 | [`pocket_tts/`](pocket_tts/) | TTS Provider | Local CPU TTS via Kyutai Pocket TTS. Streaming, ~6x realtime, persistent voice cloning from a clip. | `tts.external_provider: pocket_tts` |
-| [`voiceid/`](voiceid/) | Tools + Audio | Voice fingerprinting via Resemblyzer. The AI learns who is speaking and can identify them later. | `saveVoice`, `identifyCurrentSpeaker` |
+| [`voiceid/`](voiceid/) | Tools + Audio | Voice fingerprinting via SpeechBrain ECAPA-TDNN. The AI learns who is speaking and can identify them later, with multi-embedding storage and a margin check so similar voices dont get confused. | `saveVoice`, `identifyCurrentSpeaker` |
 | [`example_hello/`](example_hello/) | Reference | Minimal demo. Read this first when learning the plugin API. | `sayHello` |
 
 ---
@@ -193,20 +193,22 @@ extracted voice state cached to `.safetensors` so restarts are instant.
 
 ### [`voiceid/`](voiceid/) -- Voice fingerprinting and recognition
 
-![version](https://img.shields.io/badge/version-0.2.2-9333ea) ![api](https://img.shields.io/badge/api-v3-2ea44f) ![enabled](https://img.shields.io/badge/default-enabled-2ea44f) ![deps](https://img.shields.io/badge/deps-resemblyzer-blue)
+![version](https://img.shields.io/badge/version-0.3.0-9333ea) ![api](https://img.shields.io/badge/api-v3-2ea44f) ![enabled](https://img.shields.io/badge/default-enabled-2ea44f) ![encoder](https://img.shields.io/badge/encoder-ECAPA--TDNN-ff66c4) ![deps](https://img.shields.io/badge/deps-speechbrain%20%2B%20torch-blue)
 
 Voice fingerprinting for Gabriel. Subscribes to the host `mic_chunk` event
 (plugin api v3+) and keeps a few seconds of recent mic audio in a ring
-buffer. On demand, runs the buffer through a Resemblyzer encoder to get a
-256-dim speaker embedding. The AI gets tools to save voices under
+buffer. On demand, runs the buffer through SpeechBrain ECAPA-TDNN to get
+a 192-dim speaker embedding. Multiple captures per person are stored and
+scored by max cosine, plus a margin check between top-1 and top-2 so
+similar voices dont get confused. The AI gets tools to save voices under
 usernames and identify whoever is currently talking.
 
 | | |
 |---|---|
-| **Encoder** | [Resemblyzer](https://github.com/resemble-ai/Resemblyzer) (~17 MB weights, downloaded on first use) |
+| **Encoder** | [SpeechBrain ECAPA-TDNN](https://huggingface.co/speechbrain/spkrec-ecapa-voxceleb) (~14 MB weights, downloaded on first use) |
 | **Storage** | `data/plugins/voiceid/voices.npz` + `voices.json` (no pickle, safe to copy) |
 | **Tools** | `saveVoice`, `identifyCurrentSpeaker`, `listSavedVoices`, `forgetVoice`, `renameVoice` |
-| **Requires** | `resemblyzer`, `numpy`, host with api v3+ |
+| **Requires** | `speechbrain>=1.0`, `torch>=2.0`, `torchaudio>=2.0`, `scipy>=1.10`, `numpy`, host with api v3+ |
 
 ---
 
