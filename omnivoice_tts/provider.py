@@ -84,17 +84,21 @@ def _strip_emojis(text: str) -> str:
 
 
 # speechbrain 1.x ships LazyModules for optional integrations like
-# k2_fsa. when transformers does its Auto-class integration discovery
-# (during omnivoice's model load below) it touches one of those lazy
-# modules. if the underlying optional dep (k2) isnt installed, the lazy
-# import raises and cascades into 'Could not import module
-# AutoFeatureExtractor' which kills our load.
-# fix: pre-stub the broken integration modules with an empty ModuleType
-# in sys.modules so the lazy import hits the cache and returns the stub.
-# attribute access on the stub raises a clean ImportError that
+# k2_fsa, huggingface wordemb (fasttext), nlp (spacy/flair), and the
+# numba transducer loss. when transformers does its Auto-class
+# integration discovery (during omnivoice's model load below) it touches
+# one of those lazy modules. if the underlying optional dep isnt
+# installed, the lazy import raises and cascades into 'Could not import
+# module AutoFeatureExtractor' which kills our load.
+# fix: pre-stub all the broken integration modules with an empty
+# ModuleType in sys.modules so the lazy import hits the cache and returns
+# the stub. attribute access on the stub raises a clean ImportError that
 # transformers integration probes catch instead of crashing the load.
 _BROKEN_SB_INTEGRATIONS = (
     "speechbrain.integrations.k2_fsa",
+    "speechbrain.integrations.huggingface.wordemb",
+    "speechbrain.integrations.nlp",
+    "speechbrain.integrations.numba.transducer_loss",
 )
 
 

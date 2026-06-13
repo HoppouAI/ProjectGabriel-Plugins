@@ -47,16 +47,21 @@ ECAPA_DIM = 192
 
 
 # speechbrain 1.x registers LazyModule wrappers for optional integrations
-# like k2_fsa. when transformers does its AutoX integration discovery (or
-# anything else touches speechbrain.k2_integration) the lazy import
-# triggers a real `import k2` which fails if k2 isnt installed (it almost
-# never is, it's a multi-gb native dep). that failure then cascades into
-# 'Could not import module AutoFeatureExtractor' from transformers and
-# kills any other plugin that uses transformers (eg omnivoice_tts).
-# fix: pre-stub the broken integration with an empty module in
-# sys.modules so the lazy import hits the cache and returns the stub.
+# like k2_fsa, huggingface wordemb (fasttext), nlp (spacy/flair), and the
+# numba transducer loss. when transformers does its AutoX integration
+# discovery (or anything else touches the deprecated aliases) the lazy
+# import triggers a real `import <optional_dep>` which fails if that dep
+# isnt installed (and almost none of them are). that failure then
+# cascades into 'Could not import module AutoFeatureExtractor' from
+# transformers and kills any other plugin that uses transformers (eg
+# omnivoice_tts).
+# fix: pre-stub the broken integrations with empty modules in
+# sys.modules so the lazy imports hit the cache and return the stub.
 _BROKEN_SB_INTEGRATIONS = (
     "speechbrain.integrations.k2_fsa",
+    "speechbrain.integrations.huggingface.wordemb",
+    "speechbrain.integrations.nlp",
+    "speechbrain.integrations.numba.transducer_loss",
 )
 
 
