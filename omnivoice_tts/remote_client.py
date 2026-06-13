@@ -96,6 +96,9 @@ class OmniVoiceRemoteProvider:
         # doesnt drop on the floor
         self._pending: list[dict] = []
         self._pending_lock = threading.Lock()
+        # mirrors local providers flag, host audio loop polls this to
+        # decide whether to keep draining audio after an interrupt
+        self._interrupted = False
 
     # ── public api ───────────────────────────────────────────────────────
 
@@ -108,6 +111,7 @@ class OmniVoiceRemoteProvider:
         if self._running:
             return
         self._running = True
+        self._interrupted = False
         self._load_error = None
         self._ready.clear()
         # ws task is started lazily from get_audio() once we have a loop,
@@ -129,16 +133,19 @@ class OmniVoiceRemoteProvider:
     def feed_text(self, text: str):
         if not text or not self._running:
             return
+        self._interrupted = False
         self._send_or_queue({"type": P.TYPE_FEED_TEXT, "text": text})
 
     def turn_complete(self):
         if not self._running:
             return
+        self._interrupted = False
         self._send_or_queue({"type": P.TYPE_TURN_COMPLETE})
 
     def interrupt(self):
         if not self._running:
             return
+        self._interrupted = True
         # drop anything we've buffered locally that hasn't gone out yet
         with self._pending_lock:
             self._pending = [m for m in self._pending if m.get("type") == P.TYPE_INTERRUPT]
