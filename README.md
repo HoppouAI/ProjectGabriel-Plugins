@@ -1,7 +1,5 @@
 <div align="center">
 
-<img src="https://hoppou.ai/Logo.png" alt="Project Gabriel" width="160" />
-
 # Project Gabriel Plugins
 
 **Drop in plugins for [Project Gabriel](https://github.com/HoppouAI/ProjectGabriel-Remastered),
