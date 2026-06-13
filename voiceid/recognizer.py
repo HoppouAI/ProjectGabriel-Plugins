@@ -16,8 +16,10 @@ import json
 import logging
 import math
 import shutil
+import sys
 import threading
 import time
+import types
 from collections import deque
 from pathlib import Path
 from typing import Any
@@ -42,6 +44,39 @@ DISAMBIG_MARGIN = 0.06
 # ECAPA-TDNN embedding dim. Used to detect old resemblyzer files (256-dim)
 # and migrate them aside on load.
 ECAPA_DIM = 192
+
+
+# speechbrain 1.x registers LazyModule wrappers for optional integrations
+# like k2_fsa. when transformers does its AutoX integration discovery (or
+# anything else touches speechbrain.k2_integration) the lazy import
+# triggers a real `import k2` which fails if k2 isnt installed (it almost
+# never is, it's a multi-gb native dep). that failure then cascades into
+# 'Could not import module AutoFeatureExtractor' from transformers and
+# kills any other plugin that uses transformers (eg omnivoice_tts).
+# fix: pre-stub the broken integration with an empty module in
+# sys.modules so the lazy import hits the cache and returns the stub.
+_BROKEN_SB_INTEGRATIONS = (
+    "speechbrain.integrations.k2_fsa",
+)
+
+
+class _SpeechbrainStubModule(types.ModuleType):
+    def __getattr__(self, attr):
+        if attr.startswith("_"):
+            raise AttributeError(attr)
+        raise ImportError(
+            f"{self.__name__} stubbed (optional dep not installed)"
+        )
+
+
+def _stub_broken_speechbrain_integrations():
+    for name in _BROKEN_SB_INTEGRATIONS:
+        if name in sys.modules:
+            continue
+        try:
+            __import__(name)
+        except Exception:
+            sys.modules[name] = _SpeechbrainStubModule(name)
 
 
 class VoiceRecognizer:
@@ -92,6 +127,11 @@ class VoiceRecognizer:
                 raise RuntimeError(
                     "voiceid needs torch. Run: .\\bin\\uv.exe pip install torch torchaudio"
                 ) from e
+            # neutralize speechbrain's broken k2 integration before we
+            # pull speechbrain in. otherwise the LazyModule will blow up
+            # when transformers (in any other plugin) does AutoX
+            # integration discovery later in the boot.
+            _stub_broken_speechbrain_integrations()
             try:
                 # speechbrain >= 1.0 path
                 from speechbrain.inference.classifiers import EncoderClassifier

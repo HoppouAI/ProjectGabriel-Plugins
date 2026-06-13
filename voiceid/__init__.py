@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 class VoiceIDPlugin(Plugin):
     name = "voiceid"
-    version = "0.3.0"
+    version = "0.3.1"
     api_version = 3
     description = "Voice fingerprinting via SpeechBrain ECAPA-TDNN, AI saves voices to usernames and identifies the current speaker"
     author = "HoppouAI"

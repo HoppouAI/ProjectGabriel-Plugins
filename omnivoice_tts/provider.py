@@ -43,8 +43,10 @@ import logging
 import os
 import queue
 import re
+import sys
 import threading
 import time
+import types
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -79,6 +81,40 @@ _EMOJI_RE = re.compile(
 def _strip_emojis(text: str) -> str:
     cleaned = _EMOJI_RE.sub(" ", text)
     return re.sub(r"  +", " ", cleaned).strip()
+
+
+# speechbrain 1.x ships LazyModules for optional integrations like
+# k2_fsa. when transformers does its Auto-class integration discovery
+# (during omnivoice's model load below) it touches one of those lazy
+# modules. if the underlying optional dep (k2) isnt installed, the lazy
+# import raises and cascades into 'Could not import module
+# AutoFeatureExtractor' which kills our load.
+# fix: pre-stub the broken integration modules with an empty ModuleType
+# in sys.modules so the lazy import hits the cache and returns the stub.
+# attribute access on the stub raises a clean ImportError that
+# transformers integration probes catch instead of crashing the load.
+_BROKEN_SB_INTEGRATIONS = (
+    "speechbrain.integrations.k2_fsa",
+)
+
+
+class _SpeechbrainStubModule(types.ModuleType):
+    def __getattr__(self, attr):
+        if attr.startswith("_"):
+            raise AttributeError(attr)
+        raise ImportError(
+            f"{self.__name__} stubbed (optional dep not installed)"
+        )
+
+
+def _stub_broken_speechbrain_integrations():
+    for name in _BROKEN_SB_INTEGRATIONS:
+        if name in sys.modules:
+            continue
+        try:
+            __import__(name)
+        except Exception:
+            sys.modules[name] = _SpeechbrainStubModule(name)
 
 
 # nonverbal tags omnivoice's tokenizer actually understands (see
@@ -566,6 +602,12 @@ class OmniVoiceProvider:
                 return
 
             try:
+                # neutralize speechbrain's broken k2 integration before
+                # we pull in transformers via omnivoice, otherwise the
+                # AutoX integration scan crashes when voiceid (or any
+                # other plugin) loaded speechbrain earlier in the boot.
+                _stub_broken_speechbrain_integrations()
+
                 import torch
                 from omnivoice import OmniVoice
                 from .perf import apply_perf_tweaks
