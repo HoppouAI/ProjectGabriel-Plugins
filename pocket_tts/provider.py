@@ -192,10 +192,12 @@ class PocketTTSProvider:
 
     def interrupt(self):
         self._interrupted = True
+        drained = 0
         for q in (self._text_queue, self._sentence_queue):
             while True:
                 try:
                     q.get_nowait()
+                    drained += 1
                 except queue.Empty:
                     break
         # nudge the splitter so it doesn't sit on an empty generator
@@ -203,6 +205,7 @@ class PocketTTSProvider:
         # drain the asyncio output queue from the loop thread
         if self._loop and self._loop.is_running():
             self._loop.call_soon_threadsafe(self._drain_audio_queue)
+        logger.debug("pocket_tts interrupted (drained %d queued items)", drained)
 
     def _drain_audio_queue(self):
         while True:
@@ -548,7 +551,10 @@ class PocketTTSProvider:
                 first = False
             self._push_pcm(arr)
 
-        if carry.shape[0] > 0:
+        # final tail flush, but skip if we were cut off mid sentence,
+        # the host would just throw it away anyway and it leaks ~80ms
+        # of stale audio onto the next turn.
+        if carry.shape[0] > 0 and not self._interrupted and self._running:
             self._push_pcm(carry)
 
     def _push_pcm(self, arr: np.ndarray):

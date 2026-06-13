@@ -333,7 +333,7 @@ The full set of keys is documented inline in [config.example.yml](config.example
 | `use_flash_attn` | `false` | FA2 swap (opt-in). |
 | `use_cuda_graphs` | `false` | CUDA graph cache (opt-in). |
 | `max_graph_cache` | `8` | Cap on distinct cached graph shapes. |
-| `asr_model` | `openai/whisper-small` | Whisper model for auto-transcribing `ref_audio`. |
+| `asr_model` | `openai/whisper-base` | Whisper model for auto-transcribing `ref_audio`. Dropped from vram right after the clone prompt is built. |
 | `cache_voice` | `true` | Cache voice clone prompts to disk. |
 | `low_vram` | `false` | Force the aggressive `empty_cache` path. |
 

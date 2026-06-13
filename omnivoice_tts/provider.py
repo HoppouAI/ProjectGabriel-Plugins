@@ -271,8 +271,8 @@ class OmniVoiceProvider:
         self._use_cuda_graphs = bool(cfg("use_cuda_graphs", False))
         self._max_graph_cache = int(cfg("max_graph_cache", 8))
 
-        self._asr_model = str(cfg("asr_model", "openai/whisper-small")
-                              or "openai/whisper-small")
+        self._asr_model = str(cfg("asr_model", "openai/whisper-base")
+                              or "openai/whisper-base")
         self._cache_voice = bool(cfg("cache_voice", True))
         self._low_vram = bool(cfg("low_vram", False))
 
@@ -366,15 +366,21 @@ class OmniVoiceProvider:
 
     def interrupt(self):
         self._interrupted = True
+        # bounce the anchor flag so we re capture the voice on the next
+        # turns first sentence instead of carrying a half captured one
+        self._turn_anchor_done = False
+        drained = 0
         for q in (self._text_queue, self._sentence_queue):
             while True:
                 try:
                     q.get_nowait()
+                    drained += 1
                 except queue.Empty:
                     break
         self._text_queue.put(None)
         if self._loop and self._loop.is_running():
             self._loop.call_soon_threadsafe(self._drain_audio_queue)
+        logger.debug("omnivoice_tts interrupted (drained %d queued items)", drained)
 
     def _drain_audio_queue(self):
         while True:
