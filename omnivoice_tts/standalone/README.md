@@ -24,7 +24,25 @@ plugins repo or the Gabriel host installed.
 
 ## Install
 
-You need [`uv`](https://docs.astral.sh/uv/) on PATH. Then:
+### Windows (easy path)
+
+Double-click `setup.bat`. It will:
+
+1. Download `uv` into `bin/uv.exe` (no system-wide install).
+2. Create a local `.venv` with Python 3.12 (auto-downloads if missing).
+3. Ask whether you want CPU or GPU inference. GPU is strongly
+   recommended, OmniVoice is a diffusion model and CPU inference is
+   unusably slow for realtime chat.
+4. Run `uv sync` to install all deps, then swap in the CUDA torch wheel
+   if you picked GPU.
+5. Copy `config.example.yml` to `config.yml` if you don't have one.
+
+After that, edit `config.yml` (port, voice, etc) and run `run.bat`.
+
+### Manual install
+
+If you'd rather not run `setup.bat`, you can do it by hand. You need
+[`uv`](https://docs.astral.sh/uv/) on PATH. Then:
 
 ```powershell
 cd omnivoice_tts\standalone
@@ -39,17 +57,30 @@ uv pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu1
 uv sync
 ```
 
-(`cu128` for a 50-series / RTX 5090, `cu124` for 40-series, `cpu` for no
-GPU, `cu121` for older drivers, etc.)
+(`cu128` for a 50-series / RTX 5090, `cu126` for 30/40 series, `cpu` for
+no GPU, `cu121` for older drivers, etc.)
+
+### Linux / mac
+
+`setup.bat` is windows-only. On unix just do:
+
+```bash
+cd omnivoice_tts/standalone
+uv sync
+# install your platform's torch wheel if needed
+./run.sh
+```
 
 ## Configure
 
-Copy the example config and edit it:
+`setup.bat` copies `config.example.yml` to `config.yml` for you. Edit
+it to taste:
 
 ```powershell
-Copy-Item config.example.yml config.yml
 notepad config.yml
 ```
+
+(If you skipped `setup.bat` and did manual install: `Copy-Item config.example.yml config.yml` first.)
 
 The config has two sections: `server:` (host/port/permissions) and
 `omnivoice_tts:` (all the engine knobs). The engine knobs are the same
@@ -65,7 +96,10 @@ If you don't make a `config.yml`, the server boots with sane defaults
 .\run.bat
 ```
 
-or on linux / mac:
+(Requires `setup.bat` to have been run once. If you get a "venv not
+found" message, run that first.)
+
+On linux / mac:
 
 ```bash
 ./run.sh
@@ -173,5 +207,7 @@ That's it. Any websocket client can drive it, the plugin's
 | `protocol.py` | shared WS message type constants |
 | `pyproject.toml` | uv / pip project file |
 | `requirements.txt` | flat pip-friendly version |
-| `run.bat` / `run.sh` | one-shot launcher (does `uv sync` then `uv run server.py`) |
+| `setup.bat` | windows installer: bundled uv + .venv + CPU/GPU choice |
+| `run.bat` | windows launcher (requires setup.bat to have been run) |
+| `run.sh` | unix launcher (does `uv sync` then `uv run server.py`) |
 | `config.example.yml` | template config, copy to `config.yml` to use |

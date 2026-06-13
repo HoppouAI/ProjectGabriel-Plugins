@@ -8,6 +8,12 @@ build/
 dist/
 .uv.lock.bak
 
+# bundled uv from setup.bat
+bin/
+
+# uv lockfile, per-machine, dont ship
+uv.lock
+
 # real config (uses config.example.yml as the template)
 config.yml
 
