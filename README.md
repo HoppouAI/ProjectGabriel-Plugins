@@ -172,7 +172,7 @@ users can join the band too.
 
 ### [`pocket_tts/`](pocket_tts/) -- Local CPU TTS via Kyutai Pocket TTS
 
-![version](https://img.shields.io/badge/version-0.1.0-9333ea) ![api](https://img.shields.io/badge/api-v2-2ea44f) ![enabled](https://img.shields.io/badge/default-enabled-2ea44f) ![cpu](https://img.shields.io/badge/CPU-only-blue) ![cloning](https://img.shields.io/badge/voice%20cloning-yes-ff66c4)
+![version](https://img.shields.io/badge/version-0.1.1-9333ea) ![api](https://img.shields.io/badge/api-v2-2ea44f) ![enabled](https://img.shields.io/badge/default-enabled-2ea44f) ![cpu](https://img.shields.io/badge/CPU-only-blue) ![cloning](https://img.shields.io/badge/voice%20cloning-yes-ff66c4)
 
 Drop in TTS provider backed by [kyutai-labs/pocket-tts](https://github.com/kyutai-labs/pocket-tts).
 Runs entirely on the CPU, no GPU, no api keys, no separate server. Streams

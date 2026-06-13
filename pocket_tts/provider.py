@@ -77,6 +77,13 @@ def _looks_like_url(s: str) -> bool:
 
 
 class PocketTTSProvider:
+    # Process-wide warm cache. Lets a background warmup thread populate
+    # the model + voice state before the first session, and lets a
+    # later session (reconnect, etc) reuse the same model instead of
+    # paying the load cost again.
+    _warm_cache: dict = {}
+    _warm_lock = threading.Lock()
+
     def __init__(self, config, local_overrides: dict | None = None, data_dir: Path | None = None):
         self.config = config
         overrides = local_overrides or {}
@@ -224,7 +231,93 @@ class PocketTTSProvider:
 
     # -- model + voice state loader (runs once on start) ------------------
 
+    @staticmethod
+    def _cache_key(language, voice, quantize, temperature,
+                   lsd_decode_steps, eos_threshold, noise_clamp,
+                   truncate_clone) -> tuple:
+        return (
+            str(language or "english"),
+            str(voice or "alba"),
+            bool(quantize),
+            float(temperature),
+            int(lsd_decode_steps),
+            float(eos_threshold),
+            None if noise_clamp is None else float(noise_clamp),
+            bool(truncate_clone),
+        )
+
+    def _my_cache_key(self) -> tuple:
+        return self._cache_key(
+            self._language, self._voice, self._quantize, self._temp,
+            self._lsd_decode_steps, self._eos_threshold,
+            self._noise_clamp, self._truncate_clone,
+        )
+
+    @classmethod
+    def warmup(cls, *, language, voice, quantize, temperature,
+               lsd_decode_steps, eos_threshold, noise_clamp,
+               truncate_clone, cache_voice, voice_cache_dir):
+        """Load the model + voice state into the process-wide warm cache
+        on a background thread so the first session that picks pocket_tts
+        starts instantly. Idempotent, so it's safe to call again if config
+        changes (a different key just adds another entry)."""
+        key = cls._cache_key(
+            language, voice, quantize, temperature, lsd_decode_steps,
+            eos_threshold, noise_clamp, truncate_clone,
+        )
+        with cls._warm_lock:
+            if key in cls._warm_cache:
+                return
+        try:
+            try:
+                import nltk
+                nltk.download("punkt_tab", quiet=True)
+            except Exception:
+                pass
+            stub = cls.__new__(cls)
+            stub._language = language
+            stub._voice = voice
+            stub._quantize = quantize
+            stub._temp = temperature
+            stub._lsd_decode_steps = lsd_decode_steps
+            stub._eos_threshold = eos_threshold
+            stub._noise_clamp = noise_clamp
+            stub._truncate_clone = truncate_clone
+            stub._cache_voice = cache_voice
+            stub._voice_cache_dir = Path(voice_cache_dir)
+            stub._voice_cache_dir.mkdir(parents=True, exist_ok=True)
+            stub._model = None
+            stub._voice_state = None
+            stub._load_error = None
+            stub._ready = threading.Event()
+            logger.info(
+                "pocket_tts: warming up model (lang=%s voice=%s quantize=%s) in background ...",
+                language, voice, quantize,
+            )
+            stub._load_model_and_voice()
+            if stub._model is None or stub._voice_state is None:
+                logger.warning(
+                    "pocket_tts: warmup did not finish cleanly: %s",
+                    stub._load_error or "unknown error",
+                )
+            else:
+                logger.info(
+                    "pocket_tts: warmup done, first session will be hot"
+                )
+        except Exception as e:
+            logger.warning("pocket_tts: warmup thread crashed: %s", e)
+
     def _load_model_and_voice(self):
+        # hot path: reuse a previously warmed model + voice state
+        key = self._my_cache_key()
+        with self._warm_lock:
+            cached = self._warm_cache.get(key)
+        if cached is not None:
+            self._model, self._voice_state = cached
+            logger.info("pocket_tts: reusing pre-warmed model + voice (hot start)")
+            self._ready.set()
+            return
+
         try:
             from pocket_tts import TTSModel
             t0 = time.monotonic()
@@ -245,6 +338,9 @@ class PocketTTSProvider:
                 time.monotonic() - t0, self._model.sample_rate,
             )
             self._voice_state = self._resolve_voice_state(self._voice)
+            # populate the warm cache so a session restart skips this work
+            with self._warm_lock:
+                self._warm_cache[key] = (self._model, self._voice_state)
             self._ready.set()
         except Exception as e:
             self._load_error = str(e)
