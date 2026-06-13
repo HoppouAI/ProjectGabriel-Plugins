@@ -192,3 +192,4 @@ midi_band/standalone/midi_cache/
 midi_band/standalone/.venv/
 midi_band/standalone/uv.lock
 *.sf2
+/Community Plugins
