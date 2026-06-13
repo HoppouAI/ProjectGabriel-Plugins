@@ -16,6 +16,9 @@ data/
 ecapa_model/
 voices/
 
+# voice clips uploaded from the client (cached by sha256)
+data/uploads/
+
 # torch / hf caches if the user routes them locally
 .hf_cache/
 .torch_cache/

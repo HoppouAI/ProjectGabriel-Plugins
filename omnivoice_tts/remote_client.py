@@ -12,10 +12,12 @@ plugin's __init__ takes care of picking remote vs local.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import threading
 import time
+from pathlib import Path
 from typing import Any
 
 from .standalone import protocol as P
@@ -54,6 +56,23 @@ class OmniVoiceRemoteProvider:
         # torn down by routers / load balancers
         self._heartbeat = float(cfg("remote", "heartbeat_seconds", default=20.0))
 
+        # voice clone clip + transcript. read from the normal plugin
+        # config keys so the user configures voice in ONE place. if these
+        # are set we upload the clip to the server right after connect
+        # and the server uses it as ref_audio.
+        self._ref_audio_path = cfg("ref_audio", default=None) or None
+        self._ref_text = cfg("ref_text", default=None) or None
+        self._upload_ref_audio = bool(cfg("remote", "upload_ref_audio", default=True))
+        # also let the user push instruct / language / etc via the same
+        # connection-time overrides mechanism, so they only need to set
+        # them in one place (host side, not server side).
+        self._extra_voice_keys = {
+            k: cfg(k, default=None)
+            for k in ("instruct", "language", "num_step", "guidance_scale",
+                      "speed", "denoise", "stream_batch_size",
+                      "anchor_first_sentence")
+        }
+
         # Where to keep voice cache locally? remote mode skips local
         # voice cloning so we don't need it. ignored for now.
         self._data_dir = data_dir
@@ -68,6 +87,7 @@ class OmniVoiceRemoteProvider:
         self._running = False
         self._loop: asyncio.AbstractEventLoop | None = None
         self._ws_task: asyncio.Task | None = None
+        self._ws = None
         self._audio_queue: "asyncio.Queue[bytes]" = asyncio.Queue()
         self._connected = asyncio.Event()
         self._ready = threading.Event()  # matches local provider api
@@ -190,11 +210,7 @@ class OmniVoiceRemoteProvider:
                 ) as ws:
                     self._ws = ws
                     backoff = 1.0
-                    if self._send_overrides:
-                        await ws.send(json.dumps({
-                            "type": P.TYPE_CONFIG,
-                            "overrides": self._send_overrides,
-                        }))
+                    await self._send_handshake(ws)
                     await self._handle_connection(ws)
             except asyncio.CancelledError:
                 break
@@ -211,6 +227,61 @@ class OmniVoiceRemoteProvider:
                 break
             await asyncio.sleep(min(backoff, 30.0))
             backoff = min(backoff * 2, 30.0)
+
+    async def _send_handshake(self, ws):
+        """Push connection-time config + optional ref_audio upload to the
+        server before any feed_text fires. Server merges these into the
+        engine config and starts the provider."""
+        # 1. ref_audio upload (clip first, header + binary)
+        await self._maybe_upload_ref_audio(ws)
+
+        # 2. merge user-set engine knobs into an overrides dict and send
+        overrides: dict[str, Any] = {}
+        for k, v in self._extra_voice_keys.items():
+            if v not in (None, ""):
+                overrides[k] = v
+        if self._send_overrides and isinstance(self._send_overrides, dict):
+            overrides.update(self._send_overrides)
+        if overrides:
+            await ws.send(json.dumps({"type": P.TYPE_CONFIG, "overrides": overrides}))
+
+    async def _maybe_upload_ref_audio(self, ws):
+        if not self._upload_ref_audio:
+            return
+        path_str = self._ref_audio_path
+        if not path_str:
+            return
+        try:
+            p = Path(path_str).expanduser()
+        except Exception:
+            logger.warning("ref_audio path %r is unusable, skipping upload", path_str)
+            return
+        if not p.is_file():
+            logger.warning("ref_audio %s does not exist, skipping upload", p)
+            return
+        try:
+            blob = p.read_bytes()
+        except Exception as e:
+            logger.warning("failed to read ref_audio %s: %s", p, e)
+            return
+        if len(blob) > P.MAX_REF_AUDIO_BYTES:
+            logger.warning(
+                "ref_audio %s is %d bytes, over server cap %d. skipping upload.",
+                p, len(blob), P.MAX_REF_AUDIO_BYTES,
+            )
+            return
+        digest = hashlib.sha256(blob).hexdigest()
+        header = {
+            "type": P.TYPE_REF_AUDIO_UPLOAD,
+            "filename": p.name,
+            "size_bytes": len(blob),
+            "sha256": digest,
+        }
+        if self._ref_text:
+            header["ref_text"] = self._ref_text
+        await ws.send(json.dumps(header))
+        await ws.send(blob)
+        logger.info("uploaded ref_audio %s (%d bytes) to remote server", p.name, len(blob))
 
     async def _handle_connection(self, ws):
         # flush any control messages buffered while we were offline
@@ -265,6 +336,13 @@ class OmniVoiceRemoteProvider:
                 lvl = (msg.get("level") or "info").lower()
                 txt = msg.get("message") or ""
                 getattr(logger, lvl, logger.info)("server: %s", txt)
+            elif t == P.TYPE_REF_AUDIO_ACK:
+                cached = msg.get("cached")
+                saved = msg.get("saved_as")
+                logger.info(
+                    "server accepted ref_audio (%s) saved=%s",
+                    "cache hit" if cached else "new upload", saved,
+                )
             elif t == P.TYPE_PONG:
                 pass
 

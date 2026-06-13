@@ -102,18 +102,31 @@ here):
 ```yaml
 plugins:
   omnivoice_tts:
+    # voice clone stays on the gabriel box, gets uploaded to the server
+    # at connect time. set instruct instead for voice-design mode, or
+    # leave both null for auto voice.
+    ref_audio: "E:/voices/me.wav"
+    ref_text: null
+
     remote:
       url: "ws://YOUR.SERVER.IP:8788/tts"
       reconnect: true
-      timeout_seconds: 30
+      upload_ref_audio: true
 tts:
-  external_provider: "omnivoice"
+  external_provider: omnivoice_tts
 ```
 
 When `remote.url` is set the plugin skips loading the local model and
-just talks to the server over WS. Everything else (voice, dtype, etc) is
-read from the server's config, so you only configure the voice in ONE
-place.
+just talks to the server over WS. The voice knobs (`ref_audio`,
+`ref_text`, `instruct`, `language`, generation params) are forwarded to
+the server on connect so you keep voice config in ONE place. The server
+caches uploaded ref clips by sha256 so reconnects skip the upload.
+
+If you'd rather configure the voice on the server side (eg. you have
+multiple Gabriel clients hitting the same server and want them all to
+sound the same), set `remote.upload_ref_audio: false` on each client
+and configure `omnivoice_tts.ref_audio` here in the server config
+instead.
 
 ## Protocol
 
@@ -127,15 +140,22 @@ See [protocol.py](protocol.py) for the exact message types. Quick gist:
   when the turn finishes naturally, `interrupted` if the client cancelled it.
 - Client sends `feed_text` (streaming sentences), `turn_complete` (commit
   the buffered tail), `interrupt` (drop the current turn).
+- Optional: client uploads a voice clip with `ref_audio_upload` + one
+  binary frame BEFORE the first `feed_text`. Server saves it under
+  `data/uploads/<sha256>.<ext>` and uses it as `ref_audio` for the rest
+  of the connection. Reuploading the same clip is a cache hit (no
+  rewrite). Server acks with `ref_audio_ack`.
 
 That's it. Any websocket client can drive it, the plugin's
 `remote_client.py` is just one consumer.
 
 ## Limits / gotchas
 
-- Voice cloning prompts (`ref_audio`) need to live on the SERVER's disk,
-  not the client's. The client just names the voice, the server resolves
-  the path.
+- Voice cloning prompts can either live on the SERVER's disk (set
+  `omnivoice_tts.ref_audio` in `config.yml` here) OR get uploaded from
+  the Gabriel client at connect time (set `ref_audio` in the plugin's
+  config on the client, with `remote.upload_ref_audio: true`). Uploads
+  are capped at 16 MB and cached server-side by sha256.
 - Multiple clients share the loaded model. They each get their own
   request queue, but if the GPU is saturated they'll fight for slots.
 - The server doesn't authenticate connections. Put it behind a reverse

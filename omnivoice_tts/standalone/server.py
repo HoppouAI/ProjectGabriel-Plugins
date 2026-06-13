@@ -116,15 +116,20 @@ class WSSession:
         self._stop_event = asyncio.Event()
         self._sent_audio_this_turn = False
         self._turn_in_flight = False
+        # messages received during the handshake that we couldnt
+        # process pre-start (eg an early feed_text). drained after the
+        # provider is built.
+        self._deferred: list[dict] = []
 
     async def run(self):
         # send a hello as soon as we accept the WS so the client can
         # confirm protocol + server-side params before doing anything.
         await self._send_hello_minimal()
 
-        # build the provider with whatever server defaults + (if
-        # allowed) the client's initial config message.
-        client_overrides = await self._maybe_read_initial_config()
+        # collect any pre-start messages: config overrides, ref_audio
+        # upload, etc. the client gets a short window to send these
+        # before we lock in and build the provider.
+        client_overrides = await self._handshake()
 
         try:
             self.provider = await asyncio.get_running_loop().run_in_executor(
@@ -163,6 +168,12 @@ class WSSession:
         # over the WS as binary frames.
         self.audio_task = asyncio.create_task(self._audio_pump())
 
+        # flush anything the client sent during the handshake that we
+        # couldnt handle without the provider yet
+        for msg in self._deferred:
+            await self._handle_control(msg)
+        self._deferred.clear()
+
         # main read loop
         try:
             while not self._stop_event.is_set():
@@ -177,8 +188,10 @@ class WSSession:
                         continue
                     await self._handle_control(data)
                 elif "bytes" in msg and msg["bytes"] is not None:
-                    # we don't accept inbound audio, the client only sends text
-                    await self._send_json({"type": P.TYPE_ERROR, "message": "binary frames not accepted"})
+                    # we don't accept inbound audio mid-session, the
+                    # client only sends text and uploads happen during
+                    # the handshake
+                    await self._send_json({"type": P.TYPE_ERROR, "message": "binary frames not accepted after handshake"})
         except Exception as e:
             logger.warning("ws read loop crashed: %s", e)
         finally:
@@ -194,29 +207,160 @@ class WSSession:
             "model": str(self.server_config.get("model", "k2-fsa/OmniVoice")),
         })
 
-    async def _maybe_read_initial_config(self) -> dict | None:
-        # client MAY send a config message as its first frame to override
-        # voice / model. give it 250ms then move on if it didn't.
+    async def _handshake(self) -> dict:
+        """Pre-start message pump. Reads a short burst of pre-start
+        messages (config overrides, ref_audio upload) and merges them
+        into a single overrides dict. Stops as soon as anything
+        non-prestart comes in (which gets deferred to after provider
+        start) or the client falls silent for a beat.
+        """
+        overrides: dict[str, Any] = {}
+        # first frame: wait up to 1s. the plugin always sends something
+        # right after connect so this only really fires when a manual
+        # client (curl test, etc) connects.
+        first_timeout = 1.0
+        next_timeout = 0.1
+
+        while True:
+            try:
+                msg = await asyncio.wait_for(self.ws.receive(), timeout=first_timeout)
+            except asyncio.TimeoutError:
+                break
+            first_timeout = next_timeout
+
+            if msg.get("type") == "websocket.disconnect":
+                raise RuntimeError("client disconnected during handshake")
+
+            if "text" in msg and msg["text"] is not None:
+                try:
+                    data = json.loads(msg["text"])
+                except json.JSONDecodeError:
+                    await self._send_json({"type": P.TYPE_ERROR, "message": "bad json"})
+                    continue
+
+                t = data.get("type")
+                if t == P.TYPE_CONFIG:
+                    if not self.allow_overrides:
+                        logger.info("ws: dropping client overrides (--no-overrides)")
+                        continue
+                    extra = data.get("overrides") or {}
+                    if isinstance(extra, dict):
+                        overrides.update(extra)
+                    continue
+                if t == P.TYPE_REF_AUDIO_UPLOAD:
+                    if not self.allow_overrides:
+                        await self._send_json({
+                            "type": P.TYPE_ERROR,
+                            "message": "ref_audio upload rejected, server has --no-overrides",
+                        })
+                        # drain the upcoming binary frame so we dont
+                        # leave it sitting in the receive queue
+                        await self._drain_pending_binary()
+                        continue
+                    saved = await self._receive_ref_audio_upload(data)
+                    if saved is not None:
+                        overrides["ref_audio"] = str(saved)
+                        rt = data.get("ref_text")
+                        if rt:
+                            overrides["ref_text"] = str(rt)
+                    continue
+                if t == P.TYPE_PING:
+                    await self._send_json({"type": P.TYPE_PONG})
+                    continue
+                # something we cant handle pre-start. stash for after the
+                # provider is up.
+                self._deferred.append(data)
+                break
+            elif "bytes" in msg and msg["bytes"] is not None:
+                # stray binary frame outside of an upload. just drop it.
+                logger.info("ws: dropping stray binary frame during handshake (%d bytes)", len(msg["bytes"]))
+                continue
+
+        return overrides
+
+    async def _receive_ref_audio_upload(self, header: dict) -> Path | None:
+        """Handle a ref_audio_upload control message + the binary frame
+        that follows it. Saves to data_dir/uploads/<hash>.<ext> so the
+        OmniVoiceProvider voice cache can key on a stable filename.
+        Returns the saved path or None on failure.
+        """
+        size = int(header.get("size_bytes") or 0)
+        filename = str(header.get("filename") or "ref_audio.wav")
+        if size <= 0 or size > P.MAX_REF_AUDIO_BYTES:
+            await self._send_json({
+                "type": P.TYPE_ERROR,
+                "message": f"ref_audio upload size {size} out of range (0, {P.MAX_REF_AUDIO_BYTES}]",
+            })
+            await self._drain_pending_binary()
+            return None
+
+        # receive exactly one binary frame
         try:
-            msg = await asyncio.wait_for(self.ws.receive(), timeout=0.25)
+            msg = await asyncio.wait_for(self.ws.receive(), timeout=15.0)
         except asyncio.TimeoutError:
+            await self._send_json({
+                "type": P.TYPE_ERROR,
+                "message": "timed out waiting for ref_audio binary frame",
+            })
             return None
+
         if msg.get("type") == "websocket.disconnect":
-            raise RuntimeError("client disconnected before send")
-        if "text" not in msg or msg["text"] is None:
-            logger.info("ws: dropped non-text first frame, expected a config")
+            raise RuntimeError("client disconnected mid-upload")
+        if "bytes" not in msg or msg["bytes"] is None:
+            await self._send_json({
+                "type": P.TYPE_ERROR,
+                "message": "expected binary frame for ref_audio, got text",
+            })
             return None
+
+        blob = bytes(msg["bytes"])
+        if len(blob) != size:
+            logger.warning("ref_audio size mismatch: header=%d actual=%d", size, len(blob))
+
+        import hashlib
+        digest = hashlib.sha256(blob).hexdigest()[:16]
+        # honor the client-supplied extension when sensible so the cache
+        # hits across reconnects and torchaudio picks the right backend.
+        ext = Path(filename).suffix.lower()
+        if ext not in (".wav", ".flac", ".mp3", ".ogg", ".m4a", ".aac", ".opus"):
+            ext = ".wav"
+
+        uploads_dir = _HERE / "data" / "uploads"
+        uploads_dir.mkdir(parents=True, exist_ok=True)
+        saved_path = uploads_dir / f"{digest}{ext}"
+
+        cached = saved_path.exists() and saved_path.stat().st_size == len(blob)
+        if not cached:
+            saved_path.write_bytes(blob)
+            logger.info("ref_audio: saved %s (%d bytes)", saved_path.name, len(blob))
+        else:
+            logger.info("ref_audio: cache hit on %s, reusing on disk", saved_path.name)
+
+        await self._send_json({
+            "type": P.TYPE_REF_AUDIO_ACK,
+            "saved_as": str(saved_path),
+            "cached": cached,
+            "size_bytes": len(blob),
+            "sha256": digest,
+        })
+        return saved_path
+
+    async def _drain_pending_binary(self):
+        """If we rejected an upload header, the client may have already
+        queued the binary frame. Pull it off and discard so it doesnt
+        confuse the main loop."""
         try:
-            data = json.loads(msg["text"])
-        except json.JSONDecodeError:
-            return None
-        if data.get("type") != P.TYPE_CONFIG:
-            logger.info("ws: first frame wasn't a config message, dropped %r", data.get("type"))
-            return None
-        if not self.allow_overrides:
-            logger.info("ws: client tried to send config overrides but server has --no-overrides set")
-            return None
-        return data.get("overrides") or {}
+            msg = await asyncio.wait_for(self.ws.receive(), timeout=2.0)
+        except asyncio.TimeoutError:
+            return
+        if msg.get("type") == "websocket.disconnect":
+            return
+        # if it's a text frame defer it instead of dropping
+        if "text" in msg and msg["text"] is not None:
+            try:
+                self._deferred.append(json.loads(msg["text"]))
+            except Exception:
+                pass
 
     async def _readiness_watch(self):
         loop = asyncio.get_running_loop()

@@ -127,9 +127,13 @@ low_vram: false
 # runs on a laptop or non-gpu box and you have a separate machine for
 # inference. See omnivoice_tts/standalone/README.md for setup.
 #
-# When `remote.url` is set, every other key above is ignored on this
-# machine. Configure the voice / model / dtype on the SERVER side
-# instead.
+# When `remote.url` is set, most engine keys above are ignored on this
+# machine (the server has its own config). BUT a handful of voice
+# settings are forwarded automatically: ref_audio, ref_text, instruct,
+# language, num_step, guidance_scale, speed, denoise, stream_batch_size,
+# anchor_first_sentence. ref_audio is read from local disk and uploaded
+# to the server over the WS, so you can keep your voice clone clip on
+# the Gabriel machine and the server will use it for synthesis.
 remote:
   # WebSocket URL to the server. Leave null / unset to use local mode.
   # Example: "ws://192.168.1.10:8788/tts"
@@ -146,10 +150,17 @@ remote:
   # through NAT / load balancers that idle-timeout.
   heartbeat_seconds: 20
 
-  # Optional: dict of engine overrides to send to the server on connect.
-  # Only honored if the server was started with --allow-overrides
-  # (default). Useful for picking a different voice without restarting
-  # the server. Same key names as the engine knobs above.
+  # Upload the local ref_audio clip to the server on connect so it can
+  # use it for voice cloning. The server caches uploaded clips on disk
+  # keyed by their sha256, so reconnecting with the same clip skips the
+  # transfer. Set to false if you'd rather configure ref_audio on the
+  # server side (it has its own config.yml).
+  upload_ref_audio: true
+
+  # Optional: dict of engine overrides to send to the server on connect,
+  # ON TOP of the auto-forwarded voice keys above. Only honored if the
+  # server was started with --allow-overrides (default). Useful for
+  # forcing a key that isnt in the auto-forward list.
   # send_voice_override:
-  #   instruct: "female, low pitch, british accent"
+  #   dtype: "bfloat16"
   send_voice_override: null

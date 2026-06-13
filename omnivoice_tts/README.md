@@ -340,7 +340,8 @@ The full set of keys is documented inline in [config.example.yml](config.example
 | `remote.reconnect` | `true` | Auto-reconnect on transient drops in remote mode. |
 | `remote.timeout_seconds` | `30` | Connect / handshake timeout in remote mode. |
 | `remote.heartbeat_seconds` | `20` | Ping interval to keep the socket alive in remote mode. |
-| `remote.send_voice_override` | `null` | Optional dict of engine knobs to push to the server at connect. |
+| `remote.upload_ref_audio` | `true` | Auto-upload the local `ref_audio` clip to the server on connect. |
+| `remote.send_voice_override` | `null` | Optional extra dict of engine knobs to push to the server at connect. |
 
 ---
 
@@ -351,19 +352,29 @@ If your Gabriel box doesn't have a GPU, or you want to keep the model on a beefy
 ```yaml
 plugins:
   omnivoice_tts:
+    # voice config lives on the host as usual. it gets shipped to the
+    # server at connect time (ref_audio is uploaded, the rest is sent as
+    # config overrides).
+    ref_audio: "E:/voices/me.wav"
+    ref_text: null
+    instruct: null
+
     remote:
       url: "ws://YOUR.SERVER.IP:8788/tts"
       reconnect: true
+      upload_ref_audio: true
 ```
 
-When `remote.url` is set the plugin skips the local model load entirely and just streams text up + audio back over the WS. Every other engine knob is ignored on the client side, you configure the voice / dtype / etc on the SERVER's config.yml instead. That way the voice lives in one place.
+When `remote.url` is set the plugin skips the local model load entirely and just streams text up + audio back over the WS. The voice knobs (`ref_audio`, `ref_text`, `instruct`, `language`, `num_step`, `guidance_scale`, `speed`, `denoise`, `stream_batch_size`, `anchor_first_sentence`) are automatically forwarded to the server on connect, so you only configure them in ONE place (the Gabriel side). The server caches uploaded clips by sha256 so reconnects with the same voice skip the transfer.
+
+If you'd rather configure the voice on the server side instead (saves the upload on every restart), set `remote.upload_ref_audio: false` and put the voice config in `standalone/config.yml` on the server.
 
 To set up the server, see [standalone/README.md](standalone/README.md). Short version:
 
 ```powershell
 cd plugins\omnivoice_tts\standalone
 Copy-Item config.example.yml config.yml
-notepad config.yml          # set voice, port, etc
+notepad config.yml          # set host/port, model. voice can stay null if you upload from client.
 .\run.bat                   # uv sync then uv run server.py
 ```
 
