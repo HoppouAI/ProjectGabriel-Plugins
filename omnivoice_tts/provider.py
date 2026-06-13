@@ -305,6 +305,9 @@ class OmniVoiceProvider:
                               or "openai/whisper-base")
         self._cache_voice = bool(cfg("cache_voice", True))
         self._low_vram = bool(cfg("low_vram", False))
+        # standalone server flips this so the cached model keeps whisper
+        # around for fresh ref_audio uploads
+        self._force_asr = bool(cfg("force_asr", False))
 
         if data_dir is None:
             data_dir = Path(".") / "data" / "plugins" / "omnivoice_tts"
@@ -459,34 +462,43 @@ class OmniVoiceProvider:
     # -- warm cache + loader ---------------------------------------------
 
     @staticmethod
-    def _cache_key(model_path, device, dtype_name, ref_audio, ref_text,
-                   instruct, language) -> tuple:
+    def _cache_key(model_path, device, dtype_name, asr_model,
+                   use_flash_attn, use_cuda_graphs) -> tuple:
+        # voice / ref_audio / instruct / language deliberately left out
+        # so a per-client voice swap doesnt force the 5gb diffusion
+        # model to reload. the voice prompt is built per-session and
+        # already has its own on-disk cache keyed on the audio path.
         return (
             str(model_path or "k2-fsa/OmniVoice"),
             str(device or "cpu"),
             str(dtype_name or "float16").lower(),
-            str(ref_audio or ""),
-            str(ref_text or ""),
-            str(instruct or ""),
-            str(language or ""),
+            str(asr_model or "openai/whisper-base"),
+            bool(use_flash_attn),
+            bool(use_cuda_graphs),
         )
 
     def _my_cache_key(self) -> tuple:
         return self._cache_key(
             self._model_path, self._device, self._dtype_name,
-            self._ref_audio, self._ref_text, self._instruct, self._language,
+            self._asr_model, self._use_flash_attn, self._use_cuda_graphs,
         )
 
     @classmethod
     def warmup(cls, *, model_path, device, dtype_name, ref_audio, ref_text,
                instruct, language, asr_model, use_flash_attn, use_cuda_graphs,
-               max_graph_cache, cache_voice, voice_cache_dir, low_vram=False):
+               max_graph_cache, cache_voice, voice_cache_dir, low_vram=False,
+               force_asr=False):
         """Load the OmniVoice model + (optional) voice clone prompt into
         the process-wide warm cache on a background thread so the first
-        session that picks omnivoice_tts starts instantly."""
+        session that picks omnivoice_tts starts instantly.
+
+        `force_asr=True` makes the warmup load whisper alongside the
+        model even when no ref_audio is configured. Standalone-server
+        mode sets this so the cached model can transcribe ref_audio
+        clips that arrive from clients without reloading."""
         key = cls._cache_key(
-            model_path, device, dtype_name, ref_audio, ref_text,
-            instruct, language,
+            model_path, device, dtype_name, asr_model,
+            use_flash_attn, use_cuda_graphs,
         )
         with cls._warm_lock:
             if key in cls._warm_cache:
@@ -513,6 +525,7 @@ class OmniVoiceProvider:
             stub._voice_cache_dir = Path(voice_cache_dir)
             stub._voice_cache_dir.mkdir(parents=True, exist_ok=True)
             stub._low_vram = low_vram
+            stub._force_asr = force_asr
             stub._model = None
             stub._voice_clone_prompt = None
             stub._sample_rate = None
@@ -534,13 +547,20 @@ class OmniVoiceProvider:
             logger.warning("omnivoice_tts: warmup thread crashed: %s", e)
 
     def _load_model_and_voice(self):
-        # hot path: reuse a previously warmed model + voice prompt
+        # hot path: reuse a previously warmed model. voice prompt is
+        # built per session (cheap, has its own on-disk cache) so a
+        # client swapping ref_audio doesnt invalidate the heavy load.
         key = self._my_cache_key()
         with self._warm_lock:
             cached = self._warm_cache.get(key)
         if cached is not None:
-            self._model, self._voice_clone_prompt, self._sample_rate = cached
-            logger.info("omnivoice_tts: reusing pre-warmed model + voice (hot start)")
+            self._model, self._sample_rate = cached
+            logger.info("omnivoice_tts: reusing pre-warmed model (hot start)")
+            try:
+                self._voice_clone_prompt = self._resolve_voice_clone_prompt()
+            except Exception as e:
+                logger.warning("omnivoice_tts: voice prompt resolve failed: %s", e)
+                self._voice_clone_prompt = None
             self._ready.set()
             return
 
@@ -560,8 +580,13 @@ class OmniVoiceProvider:
             with self._warm_lock:
                 cached = self._warm_cache.get(key)
             if cached is not None:
-                self._model, self._voice_clone_prompt, self._sample_rate = cached
-                logger.info("omnivoice_tts: reusing pre-warmed model + voice (hot start)")
+                self._model, self._sample_rate = cached
+                logger.info("omnivoice_tts: reusing pre-warmed model (hot start)")
+                try:
+                    self._voice_clone_prompt = self._resolve_voice_clone_prompt()
+                except Exception as e:
+                    logger.warning("omnivoice_tts: voice prompt resolve failed: %s", e)
+                    self._voice_clone_prompt = None
                 self._ready.set()
                 return
 
@@ -573,7 +598,14 @@ class OmniVoiceProvider:
                 torch.set_grad_enabled(False)
 
                 t0 = time.monotonic()
-                need_asr = bool(self._ref_audio) and not self._ref_text
+                # ASR (whisper) is only needed when we have to transcribe
+                # a ref_audio clip on the fly. force_asr is set by the
+                # standalone server so a client uploading a fresh ref
+                # clip later doesnt require reloading the diffusion
+                # model just to add whisper.
+                need_asr = bool(getattr(self, "_force_asr", False)) or (
+                    bool(self._ref_audio) and not self._ref_text
+                )
                 logger.info(
                     "omnivoice_tts: loading model from %s on %s (dtype=%s, asr=%s) ...",
                     self._model_path, self._device, self._dtype_name, need_asr,
@@ -617,29 +649,31 @@ class OmniVoiceProvider:
 
                 self._voice_clone_prompt = self._resolve_voice_clone_prompt()
 
-                # whisper is only used to transcribe ref_audio when ref_text is
-                # missing. once the clone prompt is built (or we decided we dont
-                # need one) the pipeline is dead weight. drop it.
-                try:
-                    vram_before = _cuda_vram_used_gb(self._device)
-                    dropped = _unload_asr_model(self._model)
-                    if dropped:
-                        vram_after = _cuda_vram_used_gb(self._device)
-                        if vram_before is not None and vram_after is not None:
-                            logger.info(
-                                "omnivoice_tts: unloaded asr model (vram %.2f -> %.2f GB)",
-                                vram_before, vram_after,
-                            )
-                        else:
-                            logger.info("omnivoice_tts: unloaded asr model")
-                except Exception as e:
-                    logger.debug("omnivoice_tts: asr unload failed: %s", e)
+                # whisper is only used to transcribe ref_audio when
+                # ref_text is missing. once the clone prompt is built
+                # (or we decided we dont need one) the pipeline is dead
+                # weight. drop it. in standalone-server mode with
+                # force_asr=True we keep whisper around so the next
+                # client upload doesnt have to reload the whole model.
+                if not getattr(self, "_force_asr", False):
+                    try:
+                        vram_before = _cuda_vram_used_gb(self._device)
+                        dropped = _unload_asr_model(self._model)
+                        if dropped:
+                            vram_after = _cuda_vram_used_gb(self._device)
+                            if vram_before is not None and vram_after is not None:
+                                logger.info(
+                                    "omnivoice_tts: unloaded asr model (vram %.2f -> %.2f GB)",
+                                    vram_before, vram_after,
+                                )
+                            else:
+                                logger.info("omnivoice_tts: unloaded asr model")
+                    except Exception as e:
+                        logger.debug("omnivoice_tts: asr unload failed: %s", e)
 
                 # populate the warm cache so a session restart skips this work
                 with self._warm_lock:
-                    self._warm_cache[key] = (
-                        self._model, self._voice_clone_prompt, self._sample_rate,
-                    )
+                    self._warm_cache[key] = (self._model, self._sample_rate)
                 self._ready.set()
             except Exception as e:
                 self._load_error = str(e)

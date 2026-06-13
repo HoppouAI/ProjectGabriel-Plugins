@@ -95,6 +95,10 @@ def _build_provider(server_config: dict, overrides_from_client: dict | None = No
     # from the yaml (eg ref_audio: null) as real values
     cfg = {k: v for k, v in cfg.items() if v is not None}
 
+    # mirror the warmups force_asr so the per-session provider hits the
+    # cached model instead of reloading without whisper
+    cfg.setdefault("force_asr", True)
+
     host_cfg = {
         "plugins": {"omnivoice_tts": cfg},
         "audio": {"receive_sample_rate": sr},
@@ -585,6 +589,9 @@ def _kick_off_warmup(server_config: dict) -> None:
         cache_voice=bool(server_config.get("cache_voice", True)),
         voice_cache_dir=data_dir / "voices",
         low_vram=bool(server_config.get("low_vram", False)),
+        # standalone server keeps whisper loaded so the first client to
+        # upload a fresh ref_audio doesnt force a full model reload.
+        force_asr=True,
     )
 
     def _warm():
