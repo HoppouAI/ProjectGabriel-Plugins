@@ -23,9 +23,9 @@ class VoiceIDTools(BaseTool):
                     "**Invocation Condition:** Call this when someone tells you their name and "
                     "they are actively speaking, OR when you have visually identified who is "
                     "talking and want to remember their voice for next time. Call again with the "
-                    "same name later to refine the fingerprint, the system averages multiple "
-                    "captures. Do not call this without enough recent speech, the tool will "
-                    "tell you if the buffer is too short."
+                    "same name from a different moment to add another capture, multiple captures "
+                    "of the same person make recognition much more reliable. Do not call this "
+                    "without enough recent speech, the tool will tell you if the buffer is too short."
                 ),
                 parameters={
                     "type": "OBJECT",
@@ -41,11 +41,13 @@ class VoiceIDTools(BaseTool):
             types.FunctionDeclaration(
                 name="identifyCurrentSpeaker",
                 description=(
-                    "Identify the speaker of the current speech fragment using saved voice "
-                    "fingerprints. Returns the matched username and confidence.\n\n"
-                    "**Invocation Condition:** Call this every single time someone speaks to "
-                    "you to verify who is speaking and confirm their identity. Do not skip calling "
-                    "this, as you need to know who is addressing you for every turn."
+                    "Identify the speaker of the current speech using saved voice fingerprints. "
+                    "Returns either a confident match (username + confidence) or unknown with "
+                    "a reason. If unknown, treat them as unknown, do not guess based on context. "
+                    "Just ask their name and call saveVoice when they answer.\n\n"
+                    "**Invocation Condition:** Call this every time someone speaks to you to "
+                    "verify who is speaking. Do not skip it, you need to know who is addressing "
+                    "you for every turn."
                 ),
                 parameters={"type": "OBJECT", "properties": {}},
             ),
