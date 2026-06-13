@@ -100,10 +100,11 @@ max_graph_cache: 8
 # ── reference audio transcription ────────────────────────────────────
 
 # Whisper model used to auto-transcribe ref_audio when ref_text is not
-# set. Only loaded when needed. Use a smaller model
-# (openai/whisper-base) to save vram if you arent setting ref_text.
-asr_model: "openai/whisper-large-v3-turbo"
-
+# set. Only loaded when needed. whisper-small is the default because
+# its small (~250 MB) and plenty accurate for short ref clips. Bump up
+# to openai/whisper-large-v3-turbo if you need better cross-language
+# transcription quality and have the vram to spare.
+asr_model: "openai/whisper-small"
 # ── voice prompt caching ─────────────────────────────────────────────
 
 # Cache extracted voice clone prompts to disk for instant reload across

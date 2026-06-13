@@ -172,8 +172,8 @@ class OmniVoiceProvider:
         self._use_cuda_graphs = bool(cfg("use_cuda_graphs", False))
         self._max_graph_cache = int(cfg("max_graph_cache", 8))
 
-        self._asr_model = str(cfg("asr_model", "openai/whisper-large-v3-turbo")
-                              or "openai/whisper-large-v3-turbo")
+        self._asr_model = str(cfg("asr_model", "openai/whisper-small")
+                              or "openai/whisper-small")
         self._cache_voice = bool(cfg("cache_voice", True))
         self._low_vram = bool(cfg("low_vram", False))
 

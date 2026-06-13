@@ -70,8 +70,8 @@ class OmniVoiceTTSPlugin(Plugin):
             ref_text=cfg("ref_text", None) or None,
             instruct=cfg("instruct", None) or None,
             language=cfg("language", None) or None,
-            asr_model=str(cfg("asr_model", "openai/whisper-large-v3-turbo")
-                          or "openai/whisper-large-v3-turbo"),
+            asr_model=str(cfg("asr_model", "openai/whisper-small")
+                          or "openai/whisper-small"),
             use_flash_attn=bool(cfg("use_flash_attn", False)),
             use_cuda_graphs=bool(cfg("use_cuda_graphs", False)),
             max_graph_cache=int(cfg("max_graph_cache", 8)),
