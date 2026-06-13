@@ -1,0 +1,119 @@
+# OmniVoice TTS plugin local config. Optional, every key here can also
+# live in your main config.yml under plugins.omnivoice_tts. Values in
+# this file override values in config.yml.
+#
+# Copy this to plugins/omnivoice_tts/config.yml and tweak. The real
+# config.yml is gitignored.
+
+# HuggingFace repo id or local path to a downloaded OmniVoice checkpoint.
+# k2-fsa/OmniVoice is the default ~0.6B model.
+model: "k2-fsa/OmniVoice"
+
+# Device for inference. null = auto-detect (cuda > mps > cpu).
+# Examples: "cuda", "cuda:0", "mps", "cpu". GPU is strongly recommended,
+# cpu inference is unusably slow with diffusion models.
+device: null
+
+# Inference dtype. float16 is the sweet spot on nvidia. bfloat16 if your
+# gpu is rdna3/h100 or you hit fp16 numerics issues. float32 is safe but
+# eats vram.
+dtype: "float16"
+
+# Voice mode. Pick AT MOST ONE of ref_audio or instruct. Leaving both
+# empty puts the model in "auto voice" mode and the plugin uses the
+# anchor sentence trick (see anchor_first_sentence below) to keep the
+# voice consistent within a single reply.
+#
+#   ref_audio: clone the voice from this audio clip. Best results with
+#     a clean 3-10 sec sample, same language as the target speech.
+#   instruct: describe a voice with attributes. Comma separated.
+#     Supported: gender (male/female), age (child/teen/young/adult/elderly),
+#     pitch (very low/low/normal/high/very high), style (whisper),
+#     english accent (american, british, indian, etc), or chinese
+#     dialect (sichuanese, etc).
+ref_audio: null
+ref_text: null      # transcription of ref_audio. null = whisper auto-transcribe
+instruct: null      # eg. "female, low pitch, british accent"
+
+# Optional language hint. Speeds things up a touch when set. null lets
+# the model auto-detect.
+# Examples: "English", "en", "Chinese", "zh", "Japanese", "ja"
+language: null
+
+# ── generation params ─────────────────────────────────────────────────
+
+# Number of diffusion steps per sentence. 16 is the fast preset (RTF
+# ~0.025 on a 4090), 32 is the quality preset, 8 is risky but tries to
+# squeeze even more speed.
+num_step: 16
+
+# Classifier free guidance scale. 2.0 is the upstream default and the
+# best general value. Higher = more on-text but more robotic.
+guidance_scale: 2.0
+
+# Speaking speed factor. null = let the model estimate from text length.
+# 1.0 = normal, >1.0 = faster, <1.0 = slower.
+speed: null
+
+# Prepend the <|denoise|> token so the output cleans up noisy reference
+# clips. Default on.
+denoise: true
+
+# ── streaming ────────────────────────────────────────────────────────
+
+# Sentences per GPU call once warmed up. 2 is the sweet spot for first
+# chunk latency vs throughput on a 12GB+ card. 1 lowers first-audio
+# latency, 3+ saturates the GPU more but costs first-chunk latency and
+# vram.
+stream_batch_size: 2
+
+# When in auto-voice mode (no ref_audio, no instruct), generate the
+# first sentence of each reply solo and capture it as a voice clone
+# prompt so the rest of the reply uses the same voice. Without this
+# flag every sentence drifts to a different voice and the result sounds
+# like 4 different people reading 4 sentences.
+anchor_first_sentence: true
+
+# Skip past the first ~80ms of any first audio chunk so the receiver
+# doesnt stutter on tiny initial frames. value is in samples at the
+# model's native rate (24000 Hz). set to 0 to disable.
+first_chunk_min_samples: 1920
+
+# ── perf tweaks (opt-in, both off by default) ────────────────────────
+
+# Switch the LLM attention impl to flash-attention 2. Requires the
+# flash-attn pip package and a compatible CUDA build. Faster on long
+# sequences but historically crashes on some varlen paths in
+# generate(), so its kept off by default.
+use_flash_attn: false
+
+# Wrap the LLM forward with a shape-keyed CUDA Graph cache. Skips
+# per-kernel launch overhead in the diffusion loop. ~1.6x on the
+# isolated LLM, only a few percent end to end, costs ~2 GB extra vram
+# for the captured buffers. Off by default.
+use_cuda_graphs: false
+
+# Cap on distinct (batch_size, seq_len) graphs to keep cached. Bounds
+# the extra vram from cuda graphs above.
+max_graph_cache: 8
+
+# ── reference audio transcription ────────────────────────────────────
+
+# Whisper model used to auto-transcribe ref_audio when ref_text is not
+# set. Only loaded when needed. Use a smaller model
+# (openai/whisper-base) to save vram if you arent setting ref_text.
+asr_model: "openai/whisper-large-v3-turbo"
+
+# ── voice prompt caching ─────────────────────────────────────────────
+
+# Cache extracted voice clone prompts to disk for instant reload across
+# restarts. Cached under data/plugins/omnivoice_tts/voices/<stem>_<hash>.pt.
+# Cache is keyed on the file path, its mtime, the model, the dtype, and
+# the ref_text, so editing the clip or switching model triggers a fresh
+# encode automatically.
+cache_voice: true
+
+# Force the more aggressive low-vram path (auto-empty_cache between
+# sentences) regardless of detected vram. The plugin already turns this
+# on automatically for GPUs under 8.5 GB.
+low_vram: false

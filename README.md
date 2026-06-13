@@ -9,7 +9,7 @@ the real time VRChat AI from [Hoppou.AI](https://hoppou.ai/).**
 [![Discord](https://img.shields.io/badge/discord-join-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/ZNWTYTk4Vq)
 [![Website](https://img.shields.io/badge/site-hoppou.ai-ff66c4?style=for-the-badge)](https://hoppou.ai/)
 [![License](https://img.shields.io/badge/license-AGPL--3.0-d22128?style=for-the-badge)](https://github.com/HoppouAI/ProjectGabriel-Remastered/blob/main/LICENSE)
-[![Plugins](https://img.shields.io/badge/plugins-7-9333ea?style=for-the-badge)](#plugin-matrix)
+[![Plugins](https://img.shields.io/badge/plugins-8-9333ea?style=for-the-badge)](#plugin-matrix)
 [![API](https://img.shields.io/badge/api__version-2--3-2ea44f?style=for-the-badge)](#)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen?style=for-the-badge)](#contributing-a-plugin)
 
@@ -39,6 +39,7 @@ repo. Want yours featured here? Open a PR.
   - [`duo_song/`](#duo_song--lan-duet-two-halves-of-one-song)
   - [`midi_band/`](#midi_band--multi-instance-midi-band)
   - [`pocket_tts/`](#pocket_tts--local-cpu-tts-via-kyutai-pocket-tts)
+  - [`omnivoice_tts/`](#omnivoice_tts--gpu-tts-via-k2-fsa-omnivoice)
   - [`voiceid/`](#voiceid--voice-fingerprinting-and-recognition)
   - [`example_hello/`](#example_hello--reference-plugin)
 - [Installing plugins](#installing-plugins)
@@ -79,6 +80,7 @@ Read that first.
 | [`duo_song/`](duo_song/) | Tools + Audio | Two Gabriel instances on the same LAN sing duets in sync, one half per machine. | `startDuoSong` |
 | [`midi_band/`](midi_band/) | Tools + Audio | A whole band of Gabriel instances plays a MIDI together over LAN via fluidsynth. Standalone client included. | `startMidiBand` |
 | [`pocket_tts/`](pocket_tts/) | TTS Provider | Local CPU TTS via Kyutai Pocket TTS. Streaming, ~6x realtime, persistent voice cloning from a clip. | `tts.external_provider: pocket_tts` |
+| [`omnivoice_tts/`](omnivoice_tts/) | TTS Provider | GPU TTS via k2-fsa OmniVoice. 600+ languages, voice cloning, voice design (`female, british accent`), sentence-batched streaming with optional CUDA graph cache. | `tts.external_provider: omnivoice_tts` |
 | [`voiceid/`](voiceid/) | Tools + Audio | Voice fingerprinting via SpeechBrain ECAPA-TDNN. The AI learns who is speaking and can identify them later, with multi-embedding storage and a margin check so similar voices dont get confused. | `saveVoice`, `identifyCurrentSpeaker` |
 | [`example_hello/`](example_hello/) | Reference | Minimal demo. Read this first when learning the plugin API. | `sayHello` |
 
@@ -188,6 +190,32 @@ extracted voice state cached to `.safetensors` so restarts are instant.
 | **Output** | 16-bit PCM mono 24 kHz, ~200 ms first chunk, ~6x realtime on M4 |
 | **Cache** | `data/plugins/pocket_tts/voices/<name>_<hash>.safetensors` |
 | **Requires** | `pocket-tts>=2.1`, `torch>=2.5`, `stream2sentence`, `nltk`, `safetensors` |
+
+---
+
+### [`omnivoice_tts/`](omnivoice_tts/) -- GPU TTS via k2-fsa OmniVoice
+
+![version](https://img.shields.io/badge/version-0.1.0-9333ea) ![api](https://img.shields.io/badge/api-v2-2ea44f) ![enabled](https://img.shields.io/badge/default-enabled-2ea44f) ![gpu](https://img.shields.io/badge/GPU-required-red) ![cloning](https://img.shields.io/badge/voice%20cloning-yes-ff66c4) ![design](https://img.shields.io/badge/voice%20design-yes-blueviolet) ![languages](https://img.shields.io/badge/languages-600%2B-yellow)
+
+GPU TTS provider backed by [k2-fsa/OmniVoice](https://github.com/k2-fsa/OmniVoice),
+a 0.6B parameter diffusion language model. State of the art voice cloning
+quality, plus a unique voice design mode where you describe a voice with
+attributes (`female, low pitch, british accent`) without any reference
+audio. 600+ language support out of one model. The plugin streams
+sentence by sentence with batched generation to saturate the GPU, plus
+an anchor sentence trick so auto-voice mode stays consistent across a
+full reply. Background warmup at plugin load, optional FA2 + shape-keyed
+CUDA graph cache on the LLM forward, voice clone prompts cached to disk.
+
+| | |
+|---|---|
+| **Provider id** | `omnivoice_tts` (set `tts.external_provider: omnivoice_tts`) |
+| **Model** | `k2-fsa/OmniVoice` (0.6B diffusion LM, ~1.5 GB weights from HF) |
+| **Modes** | Voice cloning (`ref_audio`), voice design (`instruct`), or auto with anchor sentence |
+| **Output** | 16-bit PCM mono, native 24 kHz, resampled to host `audio.receive_sample_rate` if different |
+| **Cache** | `data/plugins/omnivoice_tts/voices/<stem>_<hash>.pt` |
+| **Perf** | Opt-in CUDA graph cache (~1.6x on LLM), opt-in flash-attn 2, low-vram auto-detect under 8.5 GB |
+| **Requires** | `omnivoice>=0.1.5`, `torch>=2.5`, `torchaudio`, `stream2sentence`, `nltk`, `scipy` |
 
 ---
 
@@ -382,8 +410,9 @@ Reference plugins in order of complexity:
 
 1. [`example_hello/`](example_hello/) -- bare minimum, one tool, two event subs.
 2. [`mood/`](mood/) -- persistent state, prompt contributor, JSON overrides.
-3. [`pocket_tts/`](pocket_tts/) -- TTS provider with streaming + voice cloning + sidecar config.
-4. [`diary/`](diary/) -- background scheduler, sub-agent calling another Gemini model, structured output, multiple tools.
+3. [`pocket_tts/`](pocket_tts/) -- CPU TTS provider with streaming + voice cloning + sidecar config + background warmup.
+4. [`omnivoice_tts/`](omnivoice_tts/) -- GPU TTS provider with sentence-batched streaming, voice cloning, voice design, anchor sentence trick, opt-in CUDA graph cache.
+5. [`diary/`](diary/) -- background scheduler, sub-agent calling another Gemini model, structured output, multiple tools.
 
 Read those before asking how to do anything. Most patterns are already
 demonstrated there.
