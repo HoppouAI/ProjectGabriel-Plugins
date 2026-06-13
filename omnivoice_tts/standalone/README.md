@@ -105,6 +105,11 @@ On linux / mac:
 ./run.sh
 ```
 
+The server starts warming the model in the background as soon as it
+boots, so the first client connection is hot. If you'd rather wait
+until someone actually connects (eg you're juggling vram for another
+process), pass `--no-warmup`.
+
 You can pass any CLI flag through:
 
 ```powershell
@@ -126,6 +131,7 @@ CLI flags override anything in `config.yml`.
 | `--instruct TEXT` | voice design prompt (eg "female, low, british") |
 | `--output-sample-rate HZ` | resample output before sending. default 24000 |
 | `--allow-overrides` / `--no-overrides` | allow / refuse per-client voice swaps |
+| `--no-warmup` | skip startup model warmup, load lazily on first connection instead |
 | `-v` | verbose logging |
 
 ## Hooking it up to Gabriel

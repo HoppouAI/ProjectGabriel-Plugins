@@ -530,6 +530,44 @@ def _resolve_server_config(args) -> tuple[dict, str, int, bool]:
     return server, host, port, allow_overrides
 
 
+# ── warmup ──────────────────────────────────────────────────────────
+
+
+def _kick_off_warmup(server_config: dict) -> None:
+    """Pre-load the model + voice clone into OmniVoiceProvider's
+    process-wide cache so the first WS client doesnt eat the ~5s
+    diffusion load. Runs in a daemon thread, the WS server is free to
+    accept connections while it warms (WSSession._readiness_watch
+    handles the race)."""
+    data_dir = Path(server_config.get("data_dir") or str(_HERE / "data"))
+    warm_kwargs = dict(
+        model_path=str(server_config.get("model") or "k2-fsa/OmniVoice"),
+        device=str(server_config.get("device") or _autodetect_device()),
+        dtype_name=str(server_config.get("dtype") or "float16"),
+        ref_audio=server_config.get("ref_audio") or None,
+        ref_text=server_config.get("ref_text") or None,
+        instruct=server_config.get("instruct") or None,
+        language=server_config.get("language") or None,
+        asr_model=str(server_config.get("asr_model") or "openai/whisper-base"),
+        use_flash_attn=bool(server_config.get("use_flash_attn", False)),
+        use_cuda_graphs=bool(server_config.get("use_cuda_graphs", False)),
+        max_graph_cache=int(server_config.get("max_graph_cache", 8)),
+        cache_voice=bool(server_config.get("cache_voice", True)),
+        voice_cache_dir=data_dir / "voices",
+        low_vram=bool(server_config.get("low_vram", False)),
+    )
+
+    def _warm():
+        try:
+            OmniVoiceProvider.warmup(**warm_kwargs)
+        except Exception as e:
+            logger.warning("warmup thread crashed: %s", e)
+
+    threading.Thread(target=_warm, daemon=True, name="omnivoice_tts-warmup").start()
+    logger.info("warming up model in background (device=%s, dtype=%s) ...",
+                warm_kwargs["device"], warm_kwargs["dtype_name"])
+
+
 def _build_parser():
     p = argparse.ArgumentParser(
         prog="omnivoice_tts-server",
@@ -551,6 +589,8 @@ def _build_parser():
                    help="Let clients send a config message to override voice/model at connect time.")
     p.add_argument("--no-overrides", dest="allow_overrides", action="store_false",
                    help="Reject client config overrides, use server config only.")
+    p.add_argument("--no-warmup", action="store_true",
+                   help="Skip the startup warmup, load the model lazily on the first connection instead.")
     p.add_argument("-v", "--verbose", action="store_true", help="Debug-level logs.")
     return p
 
@@ -580,6 +620,9 @@ def main():
     except ImportError:
         print("ERROR: uvicorn isn't installed. Run `uv sync` or `pip install -r requirements.txt`.", file=sys.stderr)
         sys.exit(2)
+
+    if not args.no_warmup:
+        _kick_off_warmup(server_config)
 
     app = make_app(server_config, allow_overrides=allow_overrides)
 
