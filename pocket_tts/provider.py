@@ -83,6 +83,10 @@ class PocketTTSProvider:
     # paying the load cost again.
     _warm_cache: dict = {}
     _warm_lock = threading.Lock()
+    # Per-key singleflight lock so the background warmup thread and the
+    # host's session-start loader cant both miss the cache and reload
+    # the same model in parallel.
+    _load_locks: dict = {}
 
     def __init__(self, config, local_overrides: dict | None = None, data_dir: Path | None = None):
         self.config = config
@@ -332,35 +336,53 @@ class PocketTTSProvider:
             self._ready.set()
             return
 
-        try:
-            from pocket_tts import TTSModel
-            t0 = time.monotonic()
-            logger.info(
-                "pocket_tts: loading model (language=%s, quantize=%s) ...",
-                self._language, self._quantize,
-            )
-            self._model = TTSModel.load_model(
-                language=self._language,
-                temp=self._temp,
-                lsd_decode_steps=self._lsd_decode_steps,
-                noise_clamp=self._noise_clamp,
-                eos_threshold=self._eos_threshold,
-                quantize=self._quantize,
-            )
-            logger.info(
-                "pocket_tts: model loaded in %.1fs (sr=%d)",
-                time.monotonic() - t0, self._model.sample_rate,
-            )
-            self._voice_state = self._resolve_voice_state(self._voice)
-            # populate the warm cache so a session restart skips this work
+        # serialize concurrent loads of the same key so warmup + session
+        # start dont both pay the full model load cost in parallel.
+        with self._warm_lock:
+            load_lock = self._load_locks.get(key)
+            if load_lock is None:
+                load_lock = threading.Lock()
+                self._load_locks[key] = load_lock
+
+        with load_lock:
+            # re-check under the per-key lock
             with self._warm_lock:
-                self._warm_cache[key] = (self._model, self._voice_state)
-            self._ready.set()
-        except Exception as e:
-            self._load_error = str(e)
-            logger.exception("pocket_tts: failed to load model / voice: %s", e)
-            # leave _ready unset, synth_loop will see the error and bail
-            self._ready.set()
+                cached = self._warm_cache.get(key)
+            if cached is not None:
+                self._model, self._voice_state = cached
+                logger.info("pocket_tts: reusing pre-warmed model + voice (hot start)")
+                self._ready.set()
+                return
+
+            try:
+                from pocket_tts import TTSModel
+                t0 = time.monotonic()
+                logger.info(
+                    "pocket_tts: loading model (language=%s, quantize=%s) ...",
+                    self._language, self._quantize,
+                )
+                self._model = TTSModel.load_model(
+                    language=self._language,
+                    temp=self._temp,
+                    lsd_decode_steps=self._lsd_decode_steps,
+                    noise_clamp=self._noise_clamp,
+                    eos_threshold=self._eos_threshold,
+                    quantize=self._quantize,
+                )
+                logger.info(
+                    "pocket_tts: model loaded in %.1fs (sr=%d)",
+                    time.monotonic() - t0, self._model.sample_rate,
+                )
+                self._voice_state = self._resolve_voice_state(self._voice)
+                # populate the warm cache so a session restart skips this work
+                with self._warm_lock:
+                    self._warm_cache[key] = (self._model, self._voice_state)
+                self._ready.set()
+            except Exception as e:
+                self._load_error = str(e)
+                logger.exception("pocket_tts: failed to load model / voice: %s", e)
+                # leave _ready unset, synth_loop will see the error and bail
+                self._ready.set()
 
     def _resolve_voice_state(self, voice: str):
         """Turn the configured `voice` into a model_state dict.

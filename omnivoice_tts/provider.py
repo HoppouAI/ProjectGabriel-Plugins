@@ -238,6 +238,10 @@ class OmniVoiceProvider:
     # paying the load cost again.
     _warm_cache: dict = {}
     _warm_lock = threading.Lock()
+    # Per-key singleflight lock so the background warmup thread and the
+    # host's session-start loader cant both blast through the cache miss
+    # at the same time and each do a full 5s load + ~5gb vram alloc.
+    _load_locks: dict = {}
 
     def __init__(self, config, local_overrides: dict | None = None, data_dir: Path | None = None):
         self.config = config
@@ -514,86 +518,107 @@ class OmniVoiceProvider:
             self._ready.set()
             return
 
-        try:
-            import torch
-            from omnivoice import OmniVoice
-            from .perf import apply_perf_tweaks
+        # serialize concurrent loads of the same key. without this the
+        # warmup thread and the host's session-start loader both miss
+        # the cache, both call OmniVoice.from_pretrained, and we burn
+        # ~5gb of vram + 5s loading the same model twice.
+        with self._warm_lock:
+            load_lock = self._load_locks.get(key)
+            if load_lock is None:
+                load_lock = threading.Lock()
+                self._load_locks[key] = load_lock
 
-            torch.set_grad_enabled(False)
-
-            t0 = time.monotonic()
-            need_asr = bool(self._ref_audio) and not self._ref_text
-            logger.info(
-                "omnivoice_tts: loading model from %s on %s (dtype=%s, asr=%s) ...",
-                self._model_path, self._device, self._dtype_name, need_asr,
-            )
-            self._model = OmniVoice.from_pretrained(
-                self._model_path,
-                device_map=self._device,
-                dtype=_resolve_dtype(self._dtype_name),
-                load_asr=need_asr,
-                asr_model_name=self._asr_model,
-            )
-            self._sample_rate = int(self._model.sampling_rate)
-            logger.info(
-                "omnivoice_tts: model loaded in %.1fs (sr=%d)",
-                time.monotonic() - t0, self._sample_rate,
-            )
-
-            # auto detect low vram if user didnt force it
-            if not self._low_vram and self._device.startswith("cuda") and torch.cuda.is_available():
-                try:
-                    gpu_idx = int(self._device.split(":")[1]) if ":" in self._device else 0
-                    total_gb = torch.cuda.get_device_properties(gpu_idx).total_memory / (1024 ** 3)
-                    if total_gb < _LOW_VRAM_THRESHOLD_GB:
-                        self._low_vram = True
-                        logger.info(
-                            "omnivoice_tts: low-vram mode auto-enabled (%.1f GB)",
-                            total_gb,
-                        )
-                except Exception:
-                    pass
-
-            # opt-in perf tweaks
-            if self._use_flash_attn or self._use_cuda_graphs:
-                enabled = apply_perf_tweaks(
-                    self._model,
-                    use_flash_attn=self._use_flash_attn,
-                    use_cuda_graphs=self._use_cuda_graphs,
-                    max_graph_cache=self._max_graph_cache,
-                )
-                logger.info("omnivoice_tts: perf tweaks: %s", enabled)
-
-            self._voice_clone_prompt = self._resolve_voice_clone_prompt()
-
-            # whisper is only used to transcribe ref_audio when ref_text is
-            # missing. once the clone prompt is built (or we decided we dont
-            # need one) the pipeline is dead weight. drop it.
-            try:
-                vram_before = _cuda_vram_used_gb(self._device)
-                dropped = _unload_asr_model(self._model)
-                if dropped:
-                    vram_after = _cuda_vram_used_gb(self._device)
-                    if vram_before is not None and vram_after is not None:
-                        logger.info(
-                            "omnivoice_tts: unloaded asr model (vram %.2f -> %.2f GB)",
-                            vram_before, vram_after,
-                        )
-                    else:
-                        logger.info("omnivoice_tts: unloaded asr model")
-            except Exception as e:
-                logger.debug("omnivoice_tts: asr unload failed: %s", e)
-
-            # populate the warm cache so a session restart skips this work
+        with load_lock:
+            # re-check under the per-key lock, the other loader may
+            # have just won and populated the cache while we waited.
             with self._warm_lock:
-                self._warm_cache[key] = (
-                    self._model, self._voice_clone_prompt, self._sample_rate,
+                cached = self._warm_cache.get(key)
+            if cached is not None:
+                self._model, self._voice_clone_prompt, self._sample_rate = cached
+                logger.info("omnivoice_tts: reusing pre-warmed model + voice (hot start)")
+                self._ready.set()
+                return
+
+            try:
+                import torch
+                from omnivoice import OmniVoice
+                from .perf import apply_perf_tweaks
+
+                torch.set_grad_enabled(False)
+
+                t0 = time.monotonic()
+                need_asr = bool(self._ref_audio) and not self._ref_text
+                logger.info(
+                    "omnivoice_tts: loading model from %s on %s (dtype=%s, asr=%s) ...",
+                    self._model_path, self._device, self._dtype_name, need_asr,
                 )
-            self._ready.set()
-        except Exception as e:
-            self._load_error = str(e)
-            logger.exception("omnivoice_tts: failed to load model / voice: %s", e)
-            self._ready.set()
+                self._model = OmniVoice.from_pretrained(
+                    self._model_path,
+                    device_map=self._device,
+                    dtype=_resolve_dtype(self._dtype_name),
+                    load_asr=need_asr,
+                    asr_model_name=self._asr_model,
+                )
+                self._sample_rate = int(self._model.sampling_rate)
+                logger.info(
+                    "omnivoice_tts: model loaded in %.1fs (sr=%d)",
+                    time.monotonic() - t0, self._sample_rate,
+                )
+
+                # auto detect low vram if user didnt force it
+                if not self._low_vram and self._device.startswith("cuda") and torch.cuda.is_available():
+                    try:
+                        gpu_idx = int(self._device.split(":")[1]) if ":" in self._device else 0
+                        total_gb = torch.cuda.get_device_properties(gpu_idx).total_memory / (1024 ** 3)
+                        if total_gb < _LOW_VRAM_THRESHOLD_GB:
+                            self._low_vram = True
+                            logger.info(
+                                "omnivoice_tts: low-vram mode auto-enabled (%.1f GB)",
+                                total_gb,
+                            )
+                    except Exception:
+                        pass
+
+                # opt-in perf tweaks
+                if self._use_flash_attn or self._use_cuda_graphs:
+                    enabled = apply_perf_tweaks(
+                        self._model,
+                        use_flash_attn=self._use_flash_attn,
+                        use_cuda_graphs=self._use_cuda_graphs,
+                        max_graph_cache=self._max_graph_cache,
+                    )
+                    logger.info("omnivoice_tts: perf tweaks: %s", enabled)
+
+                self._voice_clone_prompt = self._resolve_voice_clone_prompt()
+
+                # whisper is only used to transcribe ref_audio when ref_text is
+                # missing. once the clone prompt is built (or we decided we dont
+                # need one) the pipeline is dead weight. drop it.
+                try:
+                    vram_before = _cuda_vram_used_gb(self._device)
+                    dropped = _unload_asr_model(self._model)
+                    if dropped:
+                        vram_after = _cuda_vram_used_gb(self._device)
+                        if vram_before is not None and vram_after is not None:
+                            logger.info(
+                                "omnivoice_tts: unloaded asr model (vram %.2f -> %.2f GB)",
+                                vram_before, vram_after,
+                            )
+                        else:
+                            logger.info("omnivoice_tts: unloaded asr model")
+                except Exception as e:
+                    logger.debug("omnivoice_tts: asr unload failed: %s", e)
+
+                # populate the warm cache so a session restart skips this work
+                with self._warm_lock:
+                    self._warm_cache[key] = (
+                        self._model, self._voice_clone_prompt, self._sample_rate,
+                    )
+                self._ready.set()
+            except Exception as e:
+                self._load_error = str(e)
+                logger.exception("omnivoice_tts: failed to load model / voice: %s", e)
+                self._ready.set()
 
     def _resolve_voice_clone_prompt(self):
         """If config sets `ref_audio`, build a VoiceClonePrompt once and
