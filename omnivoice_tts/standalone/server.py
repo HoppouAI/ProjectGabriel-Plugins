@@ -459,7 +459,19 @@ class WSSession:
 
 
 def make_app(server_config: dict, *, allow_overrides: bool):
-    from fastapi import FastAPI, WebSocket
+    # fastapi import is lazy so the module is cheap to import (eg from
+    # tests). Starlettes raw WebSocketRoute is used instead of the
+    # @app.websocket() decorator because fastapis decorator runs the
+    # endpoint signature through its DI machinery, and under
+    # `from __future__ import annotations` the `ws: WebSocket` hint is
+    # a plain string the DI cant resolve (the `WebSocket` symbol lives
+    # in this functions locals, not module globals, so get_type_hints
+    # gives up and treats `ws` as a missing query param, which makes
+    # fastapi close the socket with 1008 before we ever accept it,
+    # which uvicorn logs as a generic 403). Going through starlette
+    # directly skips all of that.
+    from fastapi import FastAPI
+    from starlette.routing import WebSocketRoute
 
     app = FastAPI(title="omnivoice_tts server", version="0.1.0")
 
@@ -467,11 +479,19 @@ def make_app(server_config: dict, *, allow_overrides: bool):
     async def healthz():
         return {"ok": True, "model": server_config.get("model")}
 
-    @app.websocket(P.WS_PATH)
-    async def tts_socket(ws: WebSocket):
-        await ws.accept()
-        session = WSSession(ws, server_config, allow_overrides=allow_overrides)
-        await session.run()
+    async def tts_socket(websocket):
+        await websocket.accept()
+        session = WSSession(websocket, server_config, allow_overrides=allow_overrides)
+        try:
+            await session.run()
+        except Exception:
+            logger.exception("ws session crashed")
+            try:
+                await websocket.close(code=1011)
+            except Exception:
+                pass
+
+    app.router.routes.append(WebSocketRoute(P.WS_PATH, tts_socket))
 
     return app
 
