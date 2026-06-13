@@ -132,6 +132,39 @@ def _resample_int16_safe(arr_f32: np.ndarray, src_sr: int, dst_sr: int) -> np.nd
         return np.interp(x_new, x_old, arr_f32).astype(np.float32, copy=False)
 
 
+def _to_mono_float_np(audio) -> np.ndarray:
+    """Coerce a generate() output sample to a 1D float32 numpy array.
+
+    Upstream omnivoice 0.1.5 returns list[np.ndarray] with shape (T,),
+    the custom fork returns list[torch.Tensor] with shape (1, T). We
+    accept either and any dtype/device.
+    """
+    if isinstance(audio, np.ndarray):
+        arr = audio
+    else:
+        # assume torch tensor
+        t = audio
+        try:
+            t = t.detach()
+        except AttributeError:
+            pass
+        try:
+            t = t.to("cpu")
+        except AttributeError:
+            pass
+        try:
+            t = t.float()
+        except AttributeError:
+            pass
+        arr = t.numpy()
+    arr = np.asarray(arr)
+    if arr.ndim > 1:
+        arr = arr.reshape(-1)
+    if arr.dtype != np.float32:
+        arr = arr.astype(np.float32, copy=False)
+    return arr
+
+
 class OmniVoiceProvider:
     # Process-wide warm cache. Lets a background warmup thread populate
     # the model + voice prompt before the first session, and lets a
@@ -717,9 +750,15 @@ class OmniVoiceProvider:
         audio = audios[0]
         if anchor_capture:
             try:
+                # create_voice_clone_prompt wants (waveform_tensor_1d, sr).
+                # generate() may return either a (1, T) torch tensor or a
+                # (T,) numpy array depending on the omnivoice version, so
+                # normalize to a 1D float32 torch tensor.
+                arr = _to_mono_float_np(audio)
+                wav = torch.from_numpy(arr.astype(np.float32, copy=False))
                 with torch.inference_mode():
                     self._voice_clone_prompt = self._model.create_voice_clone_prompt(
-                        ref_audio=(audio.squeeze(0), self._sample_rate),
+                        ref_audio=(wav, self._sample_rate),
                         ref_text=sentence,
                     )
                 logger.info(
@@ -747,15 +786,12 @@ class OmniVoiceProvider:
             return audios
         return [audios]
 
-    def _push_audio(self, tensor):
-        """Convert a (1, T) float tensor at sample_rate to int16 PCM at
-        target_sr and push onto the asyncio audio queue."""
-        try:
-            arr = tensor.detach().to("cpu", dtype=None).float().numpy()
-        except Exception:
-            arr = tensor.detach().cpu().numpy().astype(np.float32, copy=False)
-        if arr.ndim > 1:
-            arr = arr.reshape(-1)
+    def _push_audio(self, audio):
+        """Convert a single audio sample to int16 PCM at target_sr and
+        push onto the asyncio audio queue. Handles both torch tensors
+        ((1, T) or (T,), any dtype, any device) and numpy arrays ((T,)
+        or (1, T))."""
+        arr = _to_mono_float_np(audio)
         if arr.size == 0:
             return
         if self._sample_rate and self._target_sr and self._sample_rate != self._target_sr:
