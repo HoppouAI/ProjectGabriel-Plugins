@@ -131,6 +131,11 @@ class PocketTTSProvider:
         self._voice_state = None
         self._ready = threading.Event()
         self._load_error: str | None = None
+        # bumped on every interrupt(). synth thread snapshots this at
+        # the top of each sentence and drops pcm whose epoch is stale,
+        # so a sentence mid stream when the user barges in cant leak
+        # late chunks into the next turn.
+        self._gen_epoch = 0
 
     # ── public api ───────────────────────────────────────────────────────
 
@@ -192,6 +197,9 @@ class PocketTTSProvider:
 
     def interrupt(self):
         self._interrupted = True
+        # bump epoch BEFORE draining queues so any push from an in flight
+        # sentence stream sees the new epoch and drops silently.
+        self._gen_epoch += 1
         drained = 0
         for q in (self._text_queue, self._sentence_queue):
             while True:
@@ -205,7 +213,10 @@ class PocketTTSProvider:
         # drain the asyncio output queue from the loop thread
         if self._loop and self._loop.is_running():
             self._loop.call_soon_threadsafe(self._drain_audio_queue)
-        logger.debug("pocket_tts interrupted (drained %d queued items)", drained)
+        logger.debug(
+            "pocket_tts interrupted (drained %d queued items, epoch=%d)",
+            drained, self._gen_epoch,
+        )
 
     def _drain_audio_queue(self):
         while True:
@@ -510,15 +521,16 @@ class PocketTTSProvider:
                 continue
             if self._interrupted:
                 continue
+            epoch = self._gen_epoch
             try:
-                self._synthesize_sentence(sentence)
+                self._synthesize_sentence(sentence, epoch=epoch)
             except Exception as e:
                 if not self._interrupted:
                     logger.warning(
                         "pocket_tts synth failed for %r: %s", sentence[:60], e,
                     )
 
-    def _synthesize_sentence(self, sentence: str):
+    def _synthesize_sentence(self, sentence: str, epoch: int | None = None):
         if self._model is None or self._voice_state is None:
             return
 
@@ -533,7 +545,11 @@ class PocketTTSProvider:
         for chunk in self._model.generate_audio_stream(
             self._voice_state, sentence, **kwargs,
         ):
-            if self._interrupted or not self._running:
+            # bail mid sentence the moment interrupt() fires. saves the
+            # remaining diffusion work for this sentence + everything
+            # that was queued behind it.
+            if (self._interrupted or not self._running
+                    or (epoch is not None and epoch != self._gen_epoch)):
                 return
             arr = chunk.detach().cpu().numpy().astype(np.float32, copy=False)
             if arr.ndim > 1:
@@ -549,16 +565,19 @@ class PocketTTSProvider:
                 arr = carry
                 carry = np.empty(0, dtype=np.float32)
                 first = False
-            self._push_pcm(arr)
+            self._push_pcm(arr, epoch=epoch)
 
         # final tail flush, but skip if we were cut off mid sentence,
         # the host would just throw it away anyway and it leaks ~80ms
         # of stale audio onto the next turn.
-        if carry.shape[0] > 0 and not self._interrupted and self._running:
-            self._push_pcm(carry)
+        if (carry.shape[0] > 0 and not self._interrupted and self._running
+                and (epoch is None or epoch == self._gen_epoch)):
+            self._push_pcm(carry, epoch=epoch)
 
-    def _push_pcm(self, arr: np.ndarray):
+    def _push_pcm(self, arr: np.ndarray, epoch: int | None = None):
         if arr.size == 0:
+            return
+        if epoch is not None and epoch != self._gen_epoch:
             return
         # tensor.numpy() can return a read-only view, so don't use out=arr
         arr = np.clip(arr, -1.0, 1.0)

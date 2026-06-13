@@ -302,6 +302,11 @@ class OmniVoiceProvider:
         # set per turn so the anchor-sentence trick only fires once at the
         # very first sentence of the response when in auto-voice mode
         self._turn_anchor_done = False
+        # bumped on every interrupt(). synth thread snapshots this at the
+        # top of each sentence and drops any pcm whose epoch is stale, so
+        # an in flight gpu generate from before the interrupt cant leak
+        # audio into the next turn.
+        self._gen_epoch = 0
 
     # ── public api ───────────────────────────────────────────────────────
 
@@ -369,6 +374,10 @@ class OmniVoiceProvider:
         # bounce the anchor flag so we re capture the voice on the next
         # turns first sentence instead of carrying a half captured one
         self._turn_anchor_done = False
+        # bump epoch BEFORE draining queues. any push from an in flight
+        # generate that finishes after this point will see the new epoch
+        # and silently drop instead of poisoning the next turn.
+        self._gen_epoch += 1
         drained = 0
         for q in (self._text_queue, self._sentence_queue):
             while True:
@@ -380,7 +389,10 @@ class OmniVoiceProvider:
         self._text_queue.put(None)
         if self._loop and self._loop.is_running():
             self._loop.call_soon_threadsafe(self._drain_audio_queue)
-        logger.debug("omnivoice_tts interrupted (drained %d queued items)", drained)
+        logger.debug(
+            "omnivoice_tts interrupted (drained %d queued items, epoch=%d)",
+            drained, self._gen_epoch,
+        )
 
     def _drain_audio_queue(self):
         while True:
@@ -763,6 +775,11 @@ class OmniVoiceProvider:
             if self._interrupted:
                 continue
 
+            # snapshot the current epoch. if interrupt() fires while the
+            # gpu is busy below, every push for this sentence will be
+            # dropped at the push site, no playback leakage.
+            epoch = self._gen_epoch
+
             # in auto-voice mode we generate the very first sentence of a
             # turn solo, then capture it as a VoiceClonePrompt so all
             # subsequent sentences in the same turn share the same voice.
@@ -774,8 +791,8 @@ class OmniVoiceProvider:
                 try:
                     audio = self._generate_one(sentence, anchor_capture=True)
                     self._turn_anchor_done = True
-                    if audio is not None:
-                        self._push_audio(audio)
+                    if audio is not None and epoch == self._gen_epoch:
+                        self._push_audio(audio, epoch=epoch)
                 except Exception as e:
                     if not self._interrupted:
                         logger.warning(
@@ -799,9 +816,9 @@ class OmniVoiceProvider:
                     )
                 continue
             for audio in audios:
-                if self._interrupted:
+                if self._interrupted or epoch != self._gen_epoch:
                     break
-                self._push_audio(audio)
+                self._push_audio(audio, epoch=epoch)
 
             if self._low_vram:
                 try:
@@ -876,20 +893,28 @@ class OmniVoiceProvider:
             return audios
         return [audios]
 
-    def _push_audio(self, audio):
+    def _push_audio(self, audio, epoch: int | None = None):
         """Convert a single audio sample to int16 PCM at target_sr and
         push onto the asyncio audio queue. Handles both torch tensors
         ((1, T) or (T,), any dtype, any device) and numpy arrays ((T,)
-        or (1, T))."""
+        or (1, T)).
+
+        If `epoch` is given and the provider has since been interrupted
+        (epoch bumped), the chunk is silently dropped.
+        """
+        if epoch is not None and epoch != self._gen_epoch:
+            return
         arr = _to_mono_float_np(audio)
         if arr.size == 0:
             return
         if self._sample_rate and self._target_sr and self._sample_rate != self._target_sr:
             arr = _resample_int16_safe(arr, self._sample_rate, self._target_sr)
-        self._push_pcm(arr)
+        self._push_pcm(arr, epoch=epoch)
 
-    def _push_pcm(self, arr: np.ndarray):
+    def _push_pcm(self, arr: np.ndarray, epoch: int | None = None):
         if arr.size == 0:
+            return
+        if epoch is not None and epoch != self._gen_epoch:
             return
         # tensor.numpy() can return a read-only view, so don't use out=arr
         arr = np.clip(arr, -1.0, 1.0)
