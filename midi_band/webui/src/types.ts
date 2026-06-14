@@ -11,6 +11,27 @@ export interface Track {
   duration: number;
 }
 
+// a per-track instrument override: a soundfont bank + program. bank 0 is
+// General MIDI, 128 is the drum kits, anything else is a variation bank.
+export interface TrackProgram {
+  bank: number;
+  program: number;
+}
+
+// one instrument the loaded soundfont actually ships
+export interface SfPreset {
+  bank: number;
+  program: number;
+  name: string;
+}
+
+export interface SoundfontResponse {
+  result: string;
+  role?: "host" | "client";
+  presets: SfPreset[];
+  has_soundfont?: boolean;
+}
+
 export interface SongEntry {
   name: string;
   size: number;
@@ -39,8 +60,9 @@ export interface Status {
   in_count_in?: boolean;
   count_in_remaining?: number;
   members?: string[];
-  // track index (as string) -> GM program override the user picked
-  track_programs?: Record<string, number>;
+  // track index (as string) -> instrument override the user picked.
+  // legacy hosts may still send a bare GM program number here.
+  track_programs?: Record<string, TrackProgram | number>;
   // false when this host has no soundfont, so its synth is silent
   has_soundfont?: boolean;
 }

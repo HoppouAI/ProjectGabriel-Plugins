@@ -121,6 +121,8 @@ class _Handler(BaseHTTPRequestHandler):
             return self._handle_sync()
         if path == "/api/presets":
             return self._handle_presets_list()
+        if path == "/api/soundfont":
+            return self._handle_soundfont()
         if path.startswith("/api/"):
             return self.send_error(404)
         return self._serve_static(path)
@@ -444,8 +446,26 @@ class _Handler(BaseHTTPRequestHandler):
         except Exception:
             return self._json(400, {"result": "error", "message": "index must be a number"})
         program = body.get("program")
+        bank = body.get("bank", 0)
         try:
-            return self._json(200, srv.set_track_instrument(index, program))
+            return self._json(200, srv.set_track_instrument(index, program, bank))
+        except Exception as e:
+            return self._json(500, {"result": "error", "message": str(e)})
+
+    def _handle_soundfont(self):
+        srv = self._server_obj()
+        if srv is None:
+            return self._json(200, {"result": "ok", "role": "client",
+                                    "presets": [], "has_soundfont": False})
+        try:
+            presets = srv.list_soundfont_presets()
+            ps = srv.player.status()
+            return self._json(200, {
+                "result": "ok",
+                "role": "host",
+                "presets": presets,
+                "has_soundfont": bool(ps.get("has_soundfont")),
+            })
         except Exception as e:
             return self._json(500, {"result": "error", "message": str(e)})
 

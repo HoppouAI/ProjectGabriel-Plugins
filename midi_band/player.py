@@ -61,6 +61,10 @@ class MidiPlayer:
         self._paused_offset: float = 0.0
         self._is_paused: bool = False
         self._count_in_lead: float = 0.0
+        # per-channel bank select (from CC0) so program_change can reach
+        # variation banks / drum kits in fancy soundfonts, not just GM.
+        self._chan_bank: dict = {}
+        self._preset_cache: Optional[list] = None
         self.on_finished: Callable[[], None] = lambda: None
 
     def _default_driver(self) -> Optional[str]:
@@ -207,6 +211,7 @@ class MidiPlayer:
             self._is_paused = False
             self._paused_offset = 0.0
             self._count_in_lead = float(count_in_lead)
+            self._chan_bank = {}
             self._thread = threading.Thread(
                 target=self._run,
                 args=(events, start_at_local, self._stop_flag),
@@ -331,15 +336,31 @@ class MidiPlayer:
             elif t == "note_off":
                 fs.noteoff(msg.channel, msg.note)
             elif t == "control_change":
+                if msg.control == 0:  # bank select MSB, remember it for this channel
+                    self._chan_bank[msg.channel] = msg.value
                 fs.cc(msg.channel, msg.control, msg.value)
             elif t == "program_change":
-                bank = 128 if msg.channel == 9 else 0
+                ch = msg.channel
+                # ch9 is GM percussion, kits live in bank 128. melodic
+                # channels use whatever bank CC0 last picked (0 = GM).
+                bank = 128 if ch == 9 else self._chan_bank.get(ch, 0)
                 if self._sfid is not None:
+                    ok = False
                     try:
-                        fs.program_select(msg.channel, self._sfid, bank, msg.program)
+                        ok = fs.program_select(ch, self._sfid, bank, msg.program) != -1
                     except Exception:
-                        # some soundfonts dont have every program, fall back
-                        fs.program_change(msg.channel, msg.program)
+                        ok = False
+                    if not ok and bank not in (0, 128):
+                        # soundfont lacks this variation bank, drop back to GM
+                        try:
+                            ok = fs.program_select(ch, self._sfid, 0, msg.program) != -1
+                        except Exception:
+                            ok = False
+                    if not ok:
+                        try:
+                            fs.program_change(ch, msg.program)
+                        except Exception:
+                            pass
                 else:
                     fs.program_change(msg.channel, msg.program)
             elif t == "pitchwheel":
@@ -497,6 +518,25 @@ class MidiPlayer:
             return bool(self.soundfont and self.soundfont.exists())
         except Exception:
             return False
+
+    def list_presets(self) -> list:
+        """Presets the loaded soundfont actually ships, [{bank,program,name}].
+        Cached, empty list when there's no soundfont or it cant be read."""
+        if self._preset_cache is not None:
+            return self._preset_cache
+        out = []
+        try:
+            if self.soundfont and self.soundfont.exists():
+                try:
+                    from . import soundfont as _sf
+                except ImportError:
+                    import soundfont as _sf  # type: ignore
+                out = _sf.read_presets(self.soundfont)
+        except Exception as e:
+            logger.warning(f"midi_band: list_presets failed: {e}")
+            out = []
+        self._preset_cache = out
+        return out
 
     def is_playing(self) -> bool:
         t = self._thread

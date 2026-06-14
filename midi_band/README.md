@@ -122,10 +122,14 @@ What you can do from it:
   missing the rest of the control room still works, the conductor just
   reports it can't run.
 - Swap a track's instrument: open its `...` menu and pick a different
-  General MIDI instrument, or "Default (from MIDI)" to fall back to
-  whatever the song asked for. Takes effect on the next play and follows
-  the track to whichever bandmate is playing it. Overridden chips show
-  the new instrument and a small swap marker.
+  one, or "Default (from MIDI)" to fall back to whatever the song asked
+  for. The picker is built from your soundfont's own presets, grouped by
+  bank, so you get the real variation banks and named patches the .sf2
+  ships, not just the 128 General MIDI names. Drum tracks list the
+  soundfont's drum kits instead. Takes effect on the next play and
+  follows the track to whichever bandmate is playing it. Overridden
+  chips show the new instrument and a small swap marker. (Hosts without
+  a readable soundfont fall back to the plain GM list.)
 - Save the current layout as a named preset and reload it later. A
   preset loads straight away when its bandmates are connected, or you
   can force load without them and the missing parts drop back into the
@@ -201,7 +205,10 @@ displays (10/20) but above generic alerts.
 - Soundfont must be the same on every machine if you want them to
   sound identical, otherwise each client uses whatever its own .sf2
   has for that program number. (Different soundfonts are fine if you
-  want each musician to have their own tone.)
+  want each musician to have their own tone.) Variation banks and drum
+  kits picked in the instrument menu are bank+program pairs, so a
+  bandmate whose soundfont lacks that exact bank quietly falls back to
+  the General MIDI version of the patch instead of going silent.
 - One song at a time. Calling `startMidiBand` while one is playing
   stops the current one first.
 - MIDI files travel over a single JSON line as base64. Files larger

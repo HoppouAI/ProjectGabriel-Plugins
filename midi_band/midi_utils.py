@@ -51,6 +51,26 @@ GM_PROGRAMS = [
 MIDI_EXTS = {".mid", ".midi"}
 
 
+def _norm_program(v):
+    """Accept a legacy int (GM program, bank 0) or a {'bank','program'}
+    dict and return (bank, program), or None if unusable. program clamps
+    to 0-127, bank to 0-128 (128 = drum kits)."""
+    try:
+        if isinstance(v, dict):
+            p = int(v.get("program"))
+            b = int(v.get("bank", 0) or 0)
+        else:
+            p = int(v)
+            b = 0
+    except Exception:
+        return None
+    if not (0 <= p <= 127):
+        return None
+    if b < 0 or b > 128:
+        b = 0
+    return b, p
+
+
 def list_midi_files(library: Path) -> List[str]:
     if not library.exists():
         return []
@@ -243,18 +263,19 @@ def _expand_single_track(mid, tpb, tempo_map, track_indices, track_programs,
             wanted_channels.add(units[pos])
 
     # instrument overrides keyed by virtual position, mapped to channel.
-    # ch9 is GM percussion, a program_change wont retune it so skip it.
+    # drum kits (ch9) are allowed: a program_change does switch kits in
+    # GM/GS, the player just forces bank 128 on ch9 for it.
     overrides = {}
     for k, v in (track_programs or {}).items():
+        np = _norm_program(v)
+        if np is None:
+            continue
         try:
             pos = int(k)
-            p = int(v)
         except Exception:
             continue
-        if 0 <= p <= 127 and 0 <= pos < len(units):
-            ch = units[pos]
-            if ch != 9:
-                overrides[ch] = p
+        if 0 <= pos < len(units):
+            overrides[units[pos]] = np  # (bank, program)
 
     events = []
     abs_tick = 0
@@ -266,21 +287,28 @@ def _expand_single_track(mid, tpb, tempo_map, track_indices, track_programs,
         if ch is None or ch not in wanted_channels:
             continue
         t = msg.type
+        if t not in note_kinds and t not in setup_kinds:
+            continue
+        sec = _ticks_to_seconds(abs_tick, tpb, tempo_map)
         if t == "program_change" and ch in overrides:
+            bank, prog = overrides[ch]
+            if ch != 9 and bank:
+                events.append((sec, mido.Message("control_change", channel=ch, control=0, value=bank)))
             try:
-                msg = msg.copy(program=overrides[ch])
+                msg = msg.copy(program=prog)
             except Exception:
                 pass
-        if t in note_kinds or t in setup_kinds:
-            events.append((_ticks_to_seconds(abs_tick, tpb, tempo_map), msg))
+        events.append((sec, msg))
 
-    # if an overridden channel never sent a program_change, prepend one so
-    # the synth doesnt sit on the default instrument
+    # if an overridden channel never sent a program_change, prepend one (plus
+    # its bank) so the synth doesnt sit on the default instrument
     seen_pc = set(m.channel for _, m in events if m.type == "program_change")
-    for ch, prog in overrides.items():
+    for ch, (bank, prog) in overrides.items():
         if ch in wanted_channels and ch not in seen_pc:
+            if ch != 9 and bank:
+                events.append((0.0, mido.Message("control_change", channel=ch, control=0, value=bank)))
             events.append((0.0, mido.Message("program_change", channel=ch, program=prog)))
-    events.sort(key=lambda x: x[0])
+    events.sort(key=lambda x: (x[0], 0 if x[1].type in setup_kinds else 1))
     return events
 
 
@@ -411,28 +439,29 @@ def expand_track_events(file_bytes: bytes, track_indices: list,
 
     wanted = set(int(i) for i in track_indices if i is not None)
 
-    # explicit per-track instrument overrides. wire form has string keys
-    # so normalize to int->int and drop anything out of GM range.
+    # explicit per-track instrument overrides. wire form has string keys and
+    # values are either a legacy GM int or a {bank, program} dict.
     overrides = {}
     for k, v in (track_programs or {}).items():
+        np = _norm_program(v)
+        if np is None:
+            continue
         try:
             ti = int(k)
-            p = int(v)
         except Exception:
             continue
-        if 0 <= p <= 127:
-            overrides[ti] = p
-    # map each overridden track's note channels to its chosen program.
-    # ch9 is GM percussion, a program_change wont retune it so skip it.
+        overrides[ti] = np  # (bank, program)
+    # map each overridden track's note channels to its chosen (bank, program).
+    # drum kits (ch9) are allowed, the synth switches kits on program_change.
     channel_override = {}
-    for ti, prog in overrides.items():
+    for ti, bp in overrides.items():
         if ti < 0 or ti >= len(mid.tracks):
             continue
         for msg in mid.tracks[ti]:
             if msg.is_meta:
                 continue
-            if hasattr(msg, "channel") and msg.type in note_kinds and msg.channel != 9:
-                channel_override[msg.channel] = prog
+            if hasattr(msg, "channel") and msg.type in note_kinds:
+                channel_override[msg.channel] = bp
 
     # first pass: which channels do our tracks actually play on?
     used_channels = set()
@@ -486,12 +515,21 @@ def expand_track_events(file_bytes: bytes, track_indices: list,
             if msg.is_meta:
                 continue
             t = msg.type
-            # explicit override wins, else rewrite program=0 on inferred
-            # channels so the synth picks the right instrument instead of
-            # grand piano
+            emit = (is_ours and (t in note_kinds or t in setup_kinds)) or \
+                ((not is_ours) and t in setup_kinds and
+                 hasattr(msg, "channel") and msg.channel in used_channels)
+            if not emit:
+                continue
+            sec = _ticks_to_seconds(abs_tick, tpb, tempo_map)
+            # explicit override wins (with its bank), else rewrite program=0
+            # on inferred channels so the synth picks the right instrument
+            # instead of grand piano
             if t == "program_change" and msg.channel in channel_override:
+                bank, prog = channel_override[msg.channel]
+                if msg.channel != 9 and bank:
+                    events.append((sec, mido.Message("control_change", channel=msg.channel, control=0, value=bank)))
                 try:
-                    msg = msg.copy(program=channel_override[msg.channel])
+                    msg = msg.copy(program=prog)
                 except Exception:
                     pass
             elif t == "program_change" and msg.program == 0 \
@@ -500,11 +538,7 @@ def expand_track_events(file_bytes: bytes, track_indices: list,
                     msg = msg.copy(program=channel_inferred[msg.channel])
                 except Exception:
                     pass
-            if is_ours and (t in note_kinds or t in setup_kinds):
-                events.append((_ticks_to_seconds(abs_tick, tpb, tempo_map), msg))
-            elif (not is_ours) and t in setup_kinds and \
-                    hasattr(msg, "channel") and msg.channel in used_channels:
-                events.append((_ticks_to_seconds(abs_tick, tpb, tempo_map), msg))
+            events.append((sec, msg))
 
     # if a channel we're playing has NO program_change at all in any
     # track, prepend one so fluidsynth doesnt sit on the per-channel
@@ -514,18 +548,19 @@ def expand_track_events(file_bytes: bytes, track_indices: list,
     for _, msg in events:
         if msg.type == "program_change":
             seen_program_for.add(msg.channel)
-    import mido as _mido
     # explicit overrides first so they win, then name-inferred fallbacks
-    for ch, prog in channel_override.items():
+    for ch, (bank, prog) in channel_override.items():
         if ch in seen_program_for:
             continue
-        events.append((0.0, _mido.Message("program_change", channel=ch, program=prog)))
+        if ch != 9 and bank:
+            events.append((0.0, mido.Message("control_change", channel=ch, control=0, value=bank)))
+        events.append((0.0, mido.Message("program_change", channel=ch, program=prog)))
         seen_program_for.add(ch)
     for ch, prog in channel_inferred.items():
         if ch in seen_program_for:
             continue
-        events.append((0.0, _mido.Message("program_change", channel=ch, program=prog)))
-    events.sort(key=lambda x: x[0])
+        events.append((0.0, mido.Message("program_change", channel=ch, program=prog)))
+    events.sort(key=lambda x: (x[0], 0 if x[1].type in setup_kinds else 1))
     return events
 
 

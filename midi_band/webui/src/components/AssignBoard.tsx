@@ -12,12 +12,25 @@ import {
 import type { DragEndEvent, DragStartEvent } from "@dnd-kit/core";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faEllipsis, faRightLeft } from "@fortawesome/free-solid-svg-icons";
-import type { Track, AssignmentMap } from "../types";
-import { familyFor, GM_PROGRAMS, GM_GROUPS } from "../instruments";
+import type { Track, AssignmentMap, SfPreset, TrackProgram } from "../types";
+import { familyFor, presetName, buildInstrumentOptions } from "../instruments";
 import { api } from "../api";
 import { useToast } from "./Toasts";
 
 const POOL = "__pool__";
+
+// normalize a track override to {bank, program}. legacy hosts send a bare
+// GM program number, newer ones send the object.
+function normProg(
+  v: TrackProgram | number | undefined | null,
+): TrackProgram | null {
+  if (v == null) return null;
+  if (typeof v === "number") return v >= 0 ? { bank: 0, program: v } : null;
+  if (typeof v === "object" && typeof v.program === "number") {
+    return { bank: typeof v.bank === "number" ? v.bank : 0, program: v.program };
+  }
+  return null;
+}
 
 interface Props {
   tracks: Track[];
@@ -25,7 +38,8 @@ interface Props {
   hostName: string;
   serverHostTracks: number[];
   serverAssignments: AssignmentMap;
-  trackPrograms?: Record<string, number>;
+  trackPrograms?: Record<string, TrackProgram | number>;
+  soundfont?: SfPreset[];
   currentSong?: string | null;
   disabled: boolean;
   resyncToken?: number;
@@ -53,15 +67,14 @@ function Chip({
   track,
   inPool,
   onMenu,
-  programOverride,
+  overrideLabel,
 }: {
   track: Track;
   inPool: boolean;
   onMenu: (e: React.MouseEvent, idx: number) => void;
-  programOverride?: number;
+  overrideLabel?: string | null;
 }) {
-  const overLabel =
-    typeof programOverride === "number" ? GM_PROGRAMS[programOverride] : null;
+  const overLabel = overrideLabel || null;
   const baseLabel = track.display_label || track.instrument || track.name || `track ${track.index}`;
   const fam = familyFor(overLabel || track.display_label || track.instrument);
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
@@ -106,6 +119,7 @@ function Lane({
   inPool,
   onMenu,
   trackPrograms,
+  soundfont,
 }: {
   id: string;
   title: string;
@@ -114,7 +128,8 @@ function Lane({
   tracks: Track[];
   inPool: boolean;
   onMenu: (e: React.MouseEvent, idx: number) => void;
-  trackPrograms?: Record<string, number>;
+  trackPrograms?: Record<string, TrackProgram | number>;
+  soundfont?: SfPreset[];
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: `lane:${id}` });
   return (
@@ -134,15 +149,19 @@ function Lane({
         {tracks.length === 0 ? (
           <div className="lane__empty">{inPool ? "all tracks assigned" : "drop tracks here"}</div>
         ) : (
-          tracks.map((t) => (
-            <Chip
-              key={t.index}
-              track={t}
-              inPool={inPool}
-              onMenu={onMenu}
-              programOverride={trackPrograms?.[String(t.index)]}
-            />
-          ))
+          tracks.map((t) => {
+            const ov = normProg(trackPrograms?.[String(t.index)]);
+            const ovLabel = ov ? presetName(soundfont, ov.bank, ov.program) : null;
+            return (
+              <Chip
+                key={t.index}
+                track={t}
+                inPool={inPool}
+                onMenu={onMenu}
+                overrideLabel={ovLabel}
+              />
+            );
+          })
         )}
       </div>
     </div>
@@ -156,6 +175,7 @@ export function AssignBoard({
   serverHostTracks,
   serverAssignments,
   trackPrograms,
+  soundfont,
   currentSong,
   disabled,
   resyncToken,
@@ -308,9 +328,9 @@ export function AssignBoard({
     setDirty(true);
   }
 
-  async function onTrackInstrument(index: number, program: number | null) {
+  async function onTrackInstrument(index: number, program: number | null, bank = 0) {
     try {
-      await api.setTrackInstrument(index, program);
+      await api.setTrackInstrument(index, program, bank);
       onApplied();
     } catch (e: any) {
       toast.push(`instrument: ${e.message}`, "err");
@@ -318,16 +338,17 @@ export function AssignBoard({
   }
 
   const activeTrack = activeIdx != null ? byIndex.get(activeIdx) : null;
-  const activeOverride =
-    activeIdx != null ? trackPrograms?.[String(activeIdx)] : undefined;
-  const activeOverLabel =
-    typeof activeOverride === "number" ? GM_PROGRAMS[activeOverride] : null;
+  const activeOv =
+    activeIdx != null ? normProg(trackPrograms?.[String(activeIdx)]) : null;
+  const activeOverLabel = activeOv
+    ? presetName(soundfont, activeOv.bank, activeOv.program)
+    : null;
   const activeFam = familyFor(activeOverLabel || activeTrack?.display_label);
   const menuTrack = menu ? byIndex.get(menu.idx) : null;
-  const menuOverride =
-    menu && typeof trackPrograms?.[String(menu.idx)] === "number"
-      ? String(trackPrograms[String(menu.idx)])
-      : "";
+  const menuOv = menu ? normProg(trackPrograms?.[String(menu.idx)]) : null;
+  const menuOverride = menuOv ? `${menuOv.bank}:${menuOv.program}` : "";
+  const menuIsDrum = !!menuTrack?.channels?.includes(9);
+  const menuOptions = buildInstrumentOptions(soundfont, menuIsDrum);
 
   return (
     <section className="board panel">
@@ -368,6 +389,7 @@ export function AssignBoard({
               inPool
               onMenu={(e, idx) => setMenu({ idx, x: e.clientX, y: e.clientY })}
               trackPrograms={trackPrograms}
+              soundfont={soundfont}
             />
             {members.map((m) => (
               <Lane
@@ -379,6 +401,7 @@ export function AssignBoard({
                 inPool={false}
                 onMenu={(e, idx) => setMenu({ idx, x: e.clientX, y: e.clientY })}
                 trackPrograms={trackPrograms}
+                soundfont={soundfont}
               />
             ))}
           </div>
@@ -424,24 +447,30 @@ export function AssignBoard({
                 disabled={disabled}
                 onChange={(e) => {
                   const v = e.target.value;
-                  onTrackInstrument(menu.idx, v === "" ? null : Number(v));
+                  if (!v) {
+                    onTrackInstrument(menu.idx, null);
+                  } else {
+                    const [b, p] = v.split(":").map(Number);
+                    onTrackInstrument(menu.idx, p, b);
+                  }
                 }}
               >
                 <option value="">Default (from MIDI)</option>
-                {GM_GROUPS.map((g, gi) => {
-                  const end = GM_GROUPS[gi + 1]?.start ?? GM_PROGRAMS.length;
-                  return (
-                    <optgroup key={g.label} label={g.label}>
-                      {GM_PROGRAMS.slice(g.start, end).map((nm, j) => (
-                        <option key={g.start + j} value={g.start + j}>
-                          {nm}
-                        </option>
-                      ))}
-                    </optgroup>
-                  );
-                })}
+                {menuOptions.map((g) => (
+                  <optgroup key={g.label} label={g.label}>
+                    {g.options.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </optgroup>
+                ))}
               </select>
-              <span className="menu__inst-hint">applies on next play</span>
+              <span className="menu__inst-hint">
+                {menuIsDrum && !menuOptions.length
+                  ? "no soundfont kits available"
+                  : "applies on next play"}
+              </span>
             </div>
             <div className="menu__head">assign track to</div>
             {members.map((m) => (

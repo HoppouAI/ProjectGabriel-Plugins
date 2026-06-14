@@ -82,9 +82,9 @@ class BandServer:
         self._loaded_info: Optional[dict] = None
         self._assignments: Dict[str, List[int]] = {}
         self._host_tracks: List[int] = []
-        # per-track instrument overrides, {track_index: gm_program 0-127}.
+        # per-track instrument overrides, {track_index: {bank, program}}.
         # empties out on song load, baked into events at play time.
-        self._track_programs: Dict[int, int] = {}
+        self._track_programs: Dict[int, dict] = {}
 
         # AI conductor hooks, both optional. key provider is called lazily so
         # it picks up the host key even if it lands after setup
@@ -300,6 +300,14 @@ class BandServer:
             "track_programs": {str(i): p for i, p in self._track_programs.items()},
         }
 
+    def list_soundfont_presets(self) -> list:
+        """Instruments the host's soundfont actually ships, for the UI's
+        per-track instrument picker. [{bank, program, name}], can be empty."""
+        try:
+            return self.player.list_presets()
+        except Exception:
+            return []
+
     def load_song(self, query: str) -> dict:
         path = midi_utils.find_midi(self.library_dir, query)
         if path is None:
@@ -361,9 +369,10 @@ class BandServer:
             "broadcast_view": self._assignments_for_broadcast(),
         }
 
-    def set_track_instrument(self, index, program) -> dict:
-        """Force a single track to play as a different GM instrument than
-        the midi asked for. program None or < 0 clears the override.
+    def set_track_instrument(self, index, program, bank=0) -> dict:
+        """Force a single track to play as a different instrument than the
+        midi asked for. program None or < 0 clears the override. bank picks
+        a soundfont variation bank (0 = General MIDI, 128 = drum kits).
         Takes effect on the next play."""
         if not self._loaded_info:
             return {"result": "error", "message": "no song loaded"}
@@ -387,9 +396,15 @@ class BandServer:
             return {"result": "ok", "index": i, "program": None}
         if p > 127:
             return {"result": "error", "message": "program must be 0-127"}
-        self._track_programs[i] = p
+        try:
+            b = int(bank) if bank is not None else 0
+        except Exception:
+            b = 0
+        if b < 0 or b > 128:
+            b = 0
+        self._track_programs[i] = {"bank": b, "program": p}
         self.on_change()
-        return {"result": "ok", "index": i, "program": p}
+        return {"result": "ok", "index": i, "program": p, "bank": b}
 
     def auto_assign(self) -> dict:
         if not self._loaded_info:
@@ -549,11 +564,14 @@ class BandServer:
         for k, v in (pr.get("track_programs") or {}).items():
             try:
                 ti = int(k)
-                p = int(v)
             except Exception:
                 continue
-            if 0 <= ti < ntracks and 0 <= p <= 127:
-                self._track_programs[ti] = p
+            np = midi_utils._norm_program(v)
+            if np is None:
+                continue
+            b, p = np
+            if 0 <= ti < ntracks:
+                self._track_programs[ti] = {"bank": b, "program": p}
         orphan: List[int] = []
         for m in missing:
             orphan.extend(assignments.get(m, []) or [])

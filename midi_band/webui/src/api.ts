@@ -5,6 +5,7 @@ import type {
   PresetsResponse,
   PresetLoadResult,
   ConductorResult,
+  SoundfontResponse,
 } from "./types";
 
 async function req<T>(path: string, opts: RequestInit = {}): Promise<T> {
@@ -41,9 +42,12 @@ export const api = {
   resume: () => req("/api/resume", { method: "POST" }),
   autoAssign: () => req("/api/auto_assign", { method: "POST" }),
   setVolume: (level: number) => postJson("/api/volume", { level }),
-  // program is a GM number 0-127, or null to clear back to the midi's own
-  setTrackInstrument: (index: number, program: number | null) =>
-    postJson("/api/track_instrument", { index, program }),
+  // program is 0-127, bank is the soundfont bank (0 = GM, 128 = drum kits),
+  // or pass program null to clear back to the midi's own instrument
+  setTrackInstrument: (index: number, program: number | null, bank = 0) =>
+    postJson("/api/track_instrument", { index, program, bank }),
+  // instruments the host's soundfont ships, for the per-track picker
+  soundfont: () => req<SoundfontResponse>("/api/soundfont"),
   conduct: (prompt: string) =>
     postJson<ConductorResult>("/api/conductor", { prompt }),
   soundcheck: (duration = 8, bpm = 120) =>

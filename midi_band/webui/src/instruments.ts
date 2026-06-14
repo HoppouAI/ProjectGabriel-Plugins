@@ -2,6 +2,7 @@
 // can color-code chips like a real DAW. Pure string matching, cheap.
 
 import type { IconDefinition } from "@fortawesome/fontawesome-svg-core";
+import type { SfPreset } from "./types";
 import {
   faDrum,
   faDrumSteelpan,
@@ -114,3 +115,73 @@ export const GM_GROUPS: { label: string; start: number }[] = [
   { label: "Percussive", start: 112 },
   { label: "Sound Effects", start: 120 },
 ];
+
+export interface InstOption {
+  value: string; // "bank:program"
+  label: string;
+}
+export interface InstGroup {
+  label: string;
+  options: InstOption[];
+}
+
+function bankLabel(bank: number): string {
+  if (bank === 0) return "General MIDI";
+  if (bank === 128) return "Drum Kits";
+  return `Bank ${bank}`;
+}
+
+// Human name for a (bank, program), preferring the soundfont's own preset
+// names and falling back to GM or a generic label.
+export function presetName(
+  presets: SfPreset[] | null | undefined,
+  bank: number,
+  program: number,
+): string {
+  if (presets && presets.length) {
+    const hit = presets.find((p) => p.bank === bank && p.program === program);
+    if (hit) return hit.name;
+  }
+  if (bank === 0 && program >= 0 && program < GM_PROGRAMS.length) {
+    return GM_PROGRAMS[program];
+  }
+  if (bank === 128) return `Kit ${program}`;
+  return `Bank ${bank} \u00b7 Prog ${program}`;
+}
+
+// Build the grouped option list for the per-track instrument picker. Drum
+// tracks (channel 9) only get bank-128 kits, melodic tracks get everything
+// else. Falls back to plain GM when the host has no soundfont presets.
+export function buildInstrumentOptions(
+  presets: SfPreset[] | null | undefined,
+  isDrum: boolean,
+): InstGroup[] {
+  if (presets && presets.length) {
+    const want = presets.filter((p) => (isDrum ? p.bank === 128 : p.bank !== 128));
+    const byBank = new Map<number, SfPreset[]>();
+    for (const p of want) {
+      const arr = byBank.get(p.bank) || [];
+      arr.push(p);
+      byBank.set(p.bank, arr);
+    }
+    const banks = [...byBank.keys()].sort((a, b) => a - b);
+    return banks.map((bank) => ({
+      label: bankLabel(bank),
+      options: byBank
+        .get(bank)!
+        .slice()
+        .sort((a, b) => a.program - b.program)
+        .map((p) => ({ value: `${p.bank}:${p.program}`, label: p.name })),
+    }));
+  }
+  // no soundfont presets: plain GM melodic list, nothing useful for drums
+  if (isDrum) return [];
+  return GM_GROUPS.map((g, gi) => {
+    const end = gi + 1 < GM_GROUPS.length ? GM_GROUPS[gi + 1].start : GM_PROGRAMS.length;
+    const options: InstOption[] = [];
+    for (let prog = g.start; prog < end; prog++) {
+      options.push({ value: `0:${prog}`, label: GM_PROGRAMS[prog] });
+    }
+    return { label: g.label, options };
+  });
+}
