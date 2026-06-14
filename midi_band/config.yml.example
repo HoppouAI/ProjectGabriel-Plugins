@@ -54,10 +54,11 @@ schedule_lead_seconds: 1.5
 # Lower number = higher priority in the chatbox.
 chatbox_priority: 25
 
-# Tiny built-in webui for browsing and uploading midi files. Host only.
-# Once enabled it serves at http://<host_ip>:<webui_port>/. No auth, so
-# only enable on a trusted LAN. Set webui_bind: 127.0.0.1 to keep it
-# local-only.
+# Built-in web control room. Host only. A DAW-style UI for browsing and
+# uploading songs, manually assigning tracks to each bandmate, and
+# driving playback (play/pause/stop/soundcheck/volume). Once enabled it
+# serves at http://<host_ip>:<webui_port>/. No auth, so only enable on a
+# trusted LAN. Set webui_bind: 127.0.0.1 to keep it local-only.
 webui_enabled: true
 webui_bind: 0.0.0.0
 webui_port: 8783

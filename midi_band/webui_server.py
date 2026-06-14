@@ -19,9 +19,31 @@ from urllib.parse import unquote
 
 logger = logging.getLogger(__name__)
 
-WEBUI_DIR = Path(__file__).parent / "webui"
+# the built Vite app lives here. webui/ holds the source project, the host
+# only ever serves the compiled output under webui/dist/.
+WEBUI_DIR = Path(__file__).parent / "webui" / "dist"
 ALLOWED_EXT = {".mid", ".midi"}
 MAX_UPLOAD = 32 * 1024 * 1024  # 32 MiB cap per request
+
+CONTENT_TYPES = {
+    ".html": "text/html; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".js": "application/javascript; charset=utf-8",
+    ".mjs": "application/javascript; charset=utf-8",
+    ".json": "application/json; charset=utf-8",
+    ".map": "application/json; charset=utf-8",
+    ".svg": "image/svg+xml",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+    ".ico": "image/x-icon",
+    ".woff": "font/woff",
+    ".woff2": "font/woff2",
+    ".ttf": "font/ttf",
+    ".txt": "text/plain; charset=utf-8",
+}
 
 
 def _safe_name(name: str) -> Optional[str]:
@@ -53,41 +75,53 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
-    def _static(self, rel: str):
-        # rel is already validated to be one of the three known files
-        path = WEBUI_DIR / rel
+    def _serve_static(self, url_path: str):
+        # map a url path to a file under dist/. unknown non-asset paths fall
+        # back to index.html so client-side routing works. path traversal
+        # outside dist/ is blocked.
+        if not WEBUI_DIR.exists():
+            return self.send_error(
+                503, "webui not built: run 'npm install && npm run build' in midi_band/webui"
+            )
+        rel = unquote(url_path).lstrip("/") or "index.html"
         try:
-            data = path.read_bytes()
+            target = (WEBUI_DIR / rel).resolve()
+            target.relative_to(WEBUI_DIR.resolve())
+        except (ValueError, OSError):
+            return self.send_error(403)
+        if not target.is_file():
+            target = (WEBUI_DIR / "index.html").resolve()
+            if not target.is_file():
+                return self.send_error(404)
+        try:
+            data = target.read_bytes()
         except Exception:
-            self.send_error(404)
-            return
-        ct = {
-            "html": "text/html; charset=utf-8",
-            "css": "text/css; charset=utf-8",
-            "js": "application/javascript; charset=utf-8",
-        }.get(path.suffix.lstrip(".").lower(), "application/octet-stream")
+            return self.send_error(404)
+        ct = CONTENT_TYPES.get(target.suffix.lower(), "application/octet-stream")
+        # hashed assets are content-addressed so they can cache forever,
+        # everything else (mainly index.html) must always revalidate.
+        if target.parent.name == "assets":
+            cache = "public, max-age=31536000, immutable"
+        else:
+            cache = "no-cache"
         self.send_response(200)
         self.send_header("Content-Type", ct)
         self.send_header("Content-Length", str(len(data)))
-        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Cache-Control", cache)
         self.end_headers()
         self.wfile.write(data)
 
     def do_GET(self):
         path = self.path.split("?", 1)[0]
-        if path == "/" or path == "/index.html":
-            return self._static("index.html")
-        if path == "/style.css":
-            return self._static("style.css")
-        if path == "/app.js":
-            return self._static("app.js")
         if path == "/api/songs":
             return self._handle_list()
         if path == "/api/status":
             return self._handle_status()
         if path == "/api/sync":
             return self._handle_sync()
-        self.send_error(404)
+        if path.startswith("/api/"):
+            return self.send_error(404)
+        return self._serve_static(path)
 
     def do_POST(self):
         path = self.path.split("?", 1)[0]
@@ -97,6 +131,8 @@ class _Handler(BaseHTTPRequestHandler):
             return self._handle_load()
         if path == "/api/auto_assign":
             return self._call_async("auto_assign_sync")
+        if path == "/api/assign":
+            return self._handle_assign()
         if path == "/api/play":
             return self._call_async("start_playback")
         if path == "/api/stop":
@@ -304,6 +340,24 @@ class _Handler(BaseHTTPRequestHandler):
             return self._json(400, {"result": "error", "message": "title required"})
         try:
             res = srv.load_song(title)
+        except Exception as e:
+            return self._json(500, {"result": "error", "message": str(e)})
+        return self._json(200, res)
+
+    def _handle_assign(self):
+        srv = self._server_obj()
+        if srv is None:
+            return self._json(400, {"result": "error", "message": "host only"})
+        body = self._read_json()
+        host_tracks = body.get("host_tracks") or []
+        client_assignments = body.get("client_assignments") or {}
+        if not isinstance(host_tracks, list) or not isinstance(client_assignments, dict):
+            return self._json(400, {
+                "result": "error",
+                "message": "host_tracks must be a list and client_assignments an object",
+            })
+        try:
+            res = srv.assign_tracks(list(host_tracks), client_assignments)
         except Exception as e:
             return self._json(500, {"result": "error", "message": str(e)})
         return self._json(200, res)

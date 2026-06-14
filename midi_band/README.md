@@ -83,7 +83,7 @@ plugins:
     synth_gain: 0.5
     audio_driver: ""           # autodetect (forced to dsound on Windows)
     chatbox_priority: 25
-    webui_enabled: true        # tiny upload UI on the host
+    webui_enabled: true        # web control room on the host
     webui_bind: 0.0.0.0
     webui_port: 8783
 ```
@@ -97,6 +97,25 @@ to the main config (or built-in defaults).
 
 Set `role: host` on one machine, `role: client` on every other Gabriel
 that should join the band as an additional musician.
+
+## Web control room
+
+When `webui_enabled: true` the host serves a small DAW-style control
+room at `http://<host_ip>:<webui_port>/` (default port 8783). It's a
+single-page app, no build step needed, the host ships a prebuilt copy.
+
+What you can do from it:
+
+- Browse the song library and drag-drop `.mid` files in to upload.
+- Load a song and see its tracks with instrument names and note counts.
+- Manually assign tracks to each bandmate by dragging chips between
+  lanes, or hit Spread to round-robin the unassigned pool. Apply pushes
+  the layout to the band.
+- Drive playback: play, pause, resume, stop, soundcheck, master volume.
+- Watch per-member sync health (jitter, rtt, age) live.
+
+No auth, so only enable it on a trusted LAN. Set
+`webui_bind: 127.0.0.1` to keep it local-only.
 
 ## Tools the AI can call (host only)
 
