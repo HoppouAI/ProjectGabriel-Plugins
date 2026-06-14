@@ -67,7 +67,7 @@ def _load_local_config(plugin_dir: Path) -> Dict[str, Any]:
 
 class MidiBandPlugin(Plugin):
     name = "midi_band"
-    version = "0.15.2"
+    version = "0.15.3"
     description = "Multiple Gabriel instances on a LAN form a band, each plays different MIDI tracks (or audio stems) of the same song in sync"
     author = "HoppouAI"
 

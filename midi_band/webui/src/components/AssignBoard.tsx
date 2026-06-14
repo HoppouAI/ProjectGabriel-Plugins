@@ -16,6 +16,7 @@ import type { Track, AssignmentMap, SfPreset, TrackProgram } from "../types";
 import { familyFor, presetName, buildInstrumentOptions } from "../instruments";
 import { api } from "../api";
 import { useToast } from "./Toasts";
+import { InstrumentPicker } from "./InstrumentPicker";
 
 const POOL = "__pool__";
 
@@ -533,12 +534,19 @@ export function AssignBoard({
             {!audioMode && (
               <div className="menu__inst">
                 <span className="menu__inst-label">plays as</span>
-                <select
-                  className="menu__select"
+                <InstrumentPicker
+                  groups={menuOptions}
                   value={menuOverride}
+                  valueLabel={
+                    menuOv ? presetName(soundfont, menuOv.bank, menuOv.program) : ""
+                  }
                   disabled={disabled}
-                  onChange={(e) => {
-                    const v = e.target.value;
+                  emptyHint={
+                    menuIsDrum && !menuOptions.length
+                      ? "no soundfont kits available"
+                      : "no matches"
+                  }
+                  onChange={(v) => {
                     if (!v) {
                       onTrackInstrument(menu.idx, null);
                     } else {
@@ -546,18 +554,7 @@ export function AssignBoard({
                       onTrackInstrument(menu.idx, p, b);
                     }
                   }}
-                >
-                  <option value="">Default (from MIDI)</option>
-                  {menuOptions.map((g) => (
-                    <optgroup key={g.label} label={g.label}>
-                      {g.options.map((o) => (
-                        <option key={o.value} value={o.value}>
-                          {o.label}
-                        </option>
-                      ))}
-                    </optgroup>
-                  ))}
-                </select>
+                />
                 <span className="menu__inst-hint">
                   {menuIsDrum && !menuOptions.length
                     ? "no soundfont kits available"

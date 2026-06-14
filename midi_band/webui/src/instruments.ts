@@ -185,3 +185,28 @@ export function buildInstrumentOptions(
     return { label: g.label, options };
   });
 }
+
+// True if every whitespace-separated token in the query appears somewhere in
+// the label. Cheap fuzzy-ish match so "elec pno" finds "Electric Piano 1".
+export function instMatches(label: string, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  const l = label.toLowerCase();
+  return q.split(/\s+/).every((t) => l.includes(t));
+}
+
+// Filter the grouped instrument list by a search string, keeping the group
+// structure and dropping groups that end up empty. The group name is folded
+// into the match so typing "bass synth" still surfaces a "Synth Bass" preset.
+export function filterInstruments(groups: InstGroup[], query: string): InstGroup[] {
+  if (!query.trim()) return groups;
+  const out: InstGroup[] = [];
+  for (const g of groups) {
+    const options = g.options.filter(
+      (o) => instMatches(o.label, query) || instMatches(`${g.label} ${o.label}`, query),
+    );
+    if (options.length) out.push({ label: g.label, options });
+  }
+  return out;
+}
+
