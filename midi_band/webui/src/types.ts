@@ -44,10 +44,45 @@ export interface SongsResponse {
   songs: SongEntry[];
 }
 
+// midi mode plays soundfont tracks, audio mode plays uploaded stems
+export type BandMode = "midi" | "audio";
+
+// one uploaded stem inside an audio song folder
+export interface AudioStem {
+  index: number;
+  label: string;
+  file: string;
+  sha: string;
+  size: number;
+  duration: number;
+  samplerate: number;
+  channels: number;
+  original: string;
+}
+
+export interface AudioSong {
+  name: string;
+  stems: AudioStem[];
+  duration: number;
+  stem_count?: number;
+}
+
+export interface AudioSongsResponse {
+  result: string;
+  role?: "host" | "client";
+  songs: AudioSong[];
+}
+
+export interface ModeResponse {
+  result: string;
+  mode: BandMode;
+}
+
 export interface Status {
   result: string;
   instance?: string;
   role: "host" | "client";
+  mode?: BandMode;
   song?: string | null;
   tracks?: Track[];
   host_tracks?: number[];

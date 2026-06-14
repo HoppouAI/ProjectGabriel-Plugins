@@ -15,7 +15,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Optional, Any
-from urllib.parse import unquote
+from urllib.parse import unquote, urlparse, parse_qs
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +24,9 @@ logger = logging.getLogger(__name__)
 WEBUI_DIR = Path(__file__).parent / "webui" / "dist"
 ALLOWED_EXT = {".mid", ".midi"}
 MAX_UPLOAD = 32 * 1024 * 1024  # 32 MiB cap per request
+# audio stems are way bigger than midis, a single uncompressed wav can run
+# into the tens of MB, so the per-file audio cap is much roomier.
+AUDIO_MAX_UPLOAD = 256 * 1024 * 1024
 
 CONTENT_TYPES = {
     ".html": "text/html; charset=utf-8",
@@ -43,6 +46,10 @@ CONTENT_TYPES = {
     ".woff2": "font/woff2",
     ".ttf": "font/ttf",
     ".txt": "text/plain; charset=utf-8",
+    ".wav": "audio/wav",
+    ".flac": "audio/flac",
+    ".ogg": "audio/ogg",
+    ".oga": "audio/ogg",
 }
 
 
@@ -123,6 +130,12 @@ class _Handler(BaseHTTPRequestHandler):
             return self._handle_presets_list()
         if path == "/api/soundfont":
             return self._handle_soundfont()
+        if path == "/api/mode":
+            return self._handle_mode_get()
+        if path == "/api/audio_songs":
+            return self._handle_audio_list()
+        if path == "/api/stem":
+            return self._handle_stem()
         if path.startswith("/api/"):
             return self.send_error(404)
         return self._serve_static(path)
@@ -159,10 +172,25 @@ class _Handler(BaseHTTPRequestHandler):
             return self._handle_conductor()
         if path == "/api/soundcheck":
             return self._handle_soundcheck()
+        if path == "/api/mode":
+            return self._handle_mode_set()
+        if path == "/api/load_audio":
+            return self._handle_load_audio()
+        if path == "/api/audio_songs/create":
+            return self._handle_audio_create()
+        if path == "/api/audio_songs/upload":
+            return self._handle_audio_upload()
+        if path == "/api/audio_songs/rename_stem":
+            return self._handle_audio_rename_stem()
+        if path == "/api/audio_songs/delete_stem":
+            return self._handle_audio_delete_stem()
         self.send_error(404)
 
     def do_DELETE(self):
         path = self.path.split("?", 1)[0]
+        m = re.match(r"^/api/audio_songs/(.+)$", path)
+        if m:
+            return self._handle_audio_delete_song(unquote(m.group(1)))
         m = re.match(r"^/api/songs/(.+)$", path)
         if m:
             return self._handle_delete(unquote(m.group(1)))
@@ -305,8 +333,9 @@ class _Handler(BaseHTTPRequestHandler):
             return self._json(200, out)
         try:
             info = srv.loaded_info()
-            ps = srv.player.status()
+            ps = srv.active_status()
             out.update({
+                "mode": info.get("mode"),
                 "song": ps.get("song") or info.get("song"),
                 "tracks": info.get("tracks"),
                 "host_tracks": info.get("host_tracks"),
@@ -500,6 +529,177 @@ class _Handler(BaseHTTPRequestHandler):
         except Exception:
             bpm = 120.0
         return self._call_async("soundcheck", dur, bpm)
+
+    # ----- audio band mode -----
+
+    def _query(self) -> dict:
+        try:
+            return parse_qs(urlparse(self.path).query)
+        except Exception:
+            return {}
+
+    def _handle_mode_get(self):
+        srv = self._server_obj()
+        if srv is None:
+            return self._json(200, {"result": "ok", "role": "client", "mode": "midi"})
+        return self._json(200, {"result": "ok", "mode": srv.get_mode()})
+
+    def _handle_mode_set(self):
+        srv = self._server_obj()
+        if srv is None:
+            return self._json(400, {"result": "error", "message": "host only"})
+        mode = str(self._read_json().get("mode") or "").strip()
+        try:
+            return self._json(200, srv.set_mode(mode))
+        except Exception as e:
+            return self._json(500, {"result": "error", "message": str(e)})
+
+    def _handle_load_audio(self):
+        srv = self._server_obj()
+        if srv is None:
+            return self._json(400, {"result": "error", "message": "host only"})
+        title = str(self._read_json().get("title") or "").strip()
+        if not title:
+            return self._json(400, {"result": "error", "message": "title required"})
+        try:
+            return self._json(200, srv.load_audio_song(title))
+        except Exception as e:
+            return self._json(500, {"result": "error", "message": str(e)})
+
+    def _handle_audio_list(self):
+        srv = self._server_obj()
+        if srv is None:
+            return self._json(200, {"result": "ok", "role": "client", "songs": []})
+        try:
+            songs = srv.list_audio_songs()
+            detailed = [srv.audio_song_info(s["name"]) or s for s in songs]
+            return self._json(200, {"result": "ok", "songs": detailed})
+        except Exception as e:
+            return self._json(500, {"result": "error", "message": str(e)})
+
+    def _handle_audio_create(self):
+        srv = self._server_obj()
+        if srv is None:
+            return self._json(400, {"result": "error", "message": "host only"})
+        name = str(self._read_json().get("name") or "").strip()
+        if not name:
+            return self._json(400, {"result": "error", "message": "name required"})
+        try:
+            return self._json(200, srv.create_audio_song(name))
+        except Exception as e:
+            return self._json(500, {"result": "error", "message": str(e)})
+
+    def _handle_audio_rename_stem(self):
+        srv = self._server_obj()
+        if srv is None:
+            return self._json(400, {"result": "error", "message": "host only"})
+        body = self._read_json()
+        song = str(body.get("song") or "").strip()
+        label = str(body.get("label") or "").strip()
+        try:
+            index = int(body.get("index"))
+        except Exception:
+            return self._json(400, {"result": "error", "message": "index must be a number"})
+        try:
+            return self._json(200, srv.rename_audio_stem(song, index, label))
+        except Exception as e:
+            return self._json(500, {"result": "error", "message": str(e)})
+
+    def _handle_audio_delete_stem(self):
+        srv = self._server_obj()
+        if srv is None:
+            return self._json(400, {"result": "error", "message": "host only"})
+        body = self._read_json()
+        song = str(body.get("song") or "").strip()
+        try:
+            index = int(body.get("index"))
+        except Exception:
+            return self._json(400, {"result": "error", "message": "index must be a number"})
+        try:
+            return self._json(200, srv.delete_audio_stem(song, index))
+        except Exception as e:
+            return self._json(500, {"result": "error", "message": str(e)})
+
+    def _handle_audio_delete_song(self, name: str):
+        srv = self._server_obj()
+        if srv is None:
+            return self._json(400, {"result": "error", "message": "host only"})
+        try:
+            return self._json(200, srv.delete_audio_song(name))
+        except Exception as e:
+            return self._json(500, {"result": "error", "message": str(e)})
+
+    def _handle_audio_upload(self):
+        srv = self._server_obj()
+        if srv is None:
+            return self._json(400, {"result": "error", "message": "host only"})
+        song = ""
+        q = self._query().get("song")
+        if q:
+            song = unquote(q[0])
+        if not song:
+            return self._json(400, {"result": "error", "message": "song required"})
+        ctype = self.headers.get("Content-Type", "")
+        m = re.search(r"boundary=([^\s;]+)", ctype)
+        if not m:
+            return self._json(400, {"result": "error", "message": "no multipart boundary"})
+        try:
+            length = int(self.headers.get("Content-Length") or "0")
+        except Exception:
+            length = 0
+        if length <= 0 or length > AUDIO_MAX_UPLOAD:
+            return self._json(413, {"result": "error", "message": "upload too large or empty"})
+        body = self.rfile.read(length)
+        boundary = ("--" + m.group(1)).encode("utf-8")
+        for part in body.split(boundary):
+            part = part.strip(b"\r\n")
+            if not part or part == b"--":
+                continue
+            head, _, content = part.partition(b"\r\n\r\n")
+            headers = head.decode("utf-8", "replace")
+            disp = re.search(r'filename="([^"]+)"', headers, re.IGNORECASE)
+            if not disp:
+                continue
+            raw_name = disp.group(1).replace("\\", "/").split("/")[-1].strip()
+            data = content[:-2] if content.endswith(b"\r\n") else content
+            try:
+                res = srv.add_audio_stem(song, raw_name, data)
+            except Exception as e:
+                return self._json(500, {"result": "error", "message": str(e)})
+            return self._json(200, res)
+        return self._json(400, {"result": "error", "message": "no file in request"})
+
+    def _handle_stem(self):
+        srv = self._server_obj()
+        if srv is None:
+            return self.send_error(404)
+        q = self._query()
+        song = unquote(q.get("song", [""])[0])
+        try:
+            index = int(q.get("index", ["-1"])[0])
+        except Exception:
+            return self.send_error(400)
+        if not song:
+            return self.send_error(400)
+        try:
+            path = srv.audio_stem_path(song, index)
+        except Exception:
+            path = None
+        if path is None or not path.is_file():
+            return self.send_error(404)
+        ct = CONTENT_TYPES.get(path.suffix.lower(), "application/octet-stream")
+        try:
+            size = path.stat().st_size
+            self.send_response(200)
+            self.send_header("Content-Type", ct)
+            self.send_header("Content-Length", str(size))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            with path.open("rb") as f:
+                for chunk in iter(lambda: f.read(1 << 16), b""):
+                    self.wfile.write(chunk)
+        except Exception as e:
+            logger.debug(f"midi_band webui: stem stream error: {e}")
 
     def _call_async(self, method_name: str, *args: Any):
         """Invoke an async method on the band server from this thread by

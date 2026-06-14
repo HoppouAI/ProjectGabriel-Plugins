@@ -43,6 +43,7 @@ if str(_PARENT) not in sys.path:
 
 from midi_band.client import BandClient  # noqa: E402
 from midi_band.player import MidiPlayer  # noqa: E402
+from midi_band.audio_player import AudioPlayer, audio_import_error  # noqa: E402
 from midi_band import protocol as P      # noqa: E402
 
 from cli_ui import (  # noqa: E402
@@ -103,6 +104,11 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--device", default=None,
         help="Audio device name to send output to. Eg the name of a virtual audio cable. Default = system default.",
+    )
+    p.add_argument(
+        "--audio-device", default=None,
+        help="Output device for AUDIO BAND mode (stem playback via sounddevice). "
+             "Name substring or index. Blank = use --device, then system default.",
     )
     p.add_argument(
         "--cache-dir", default=None,
@@ -263,6 +269,7 @@ def main():
     gain = float(_pick(args.gain, cfg, "gain", 0.5))
     driver = _pick(args.driver, cfg, "driver", None)
     device = _pick(args.device, cfg, "device", None)
+    audio_device = _pick(args.audio_device, cfg, "audio_device", None)
     cache_dir = _pick(args.cache_dir, cfg, "cache_dir", "midi_cache")
     fluidsynth_dir = _pick(args.fluidsynth_dir, cfg, "fluidsynth_dir", "vendor/fluidsynth")
     # bool: cli flag forces False, otherwise config wins, default True
@@ -280,7 +287,7 @@ def main():
     if name:
         _set_windows_app_id(str(name))
 
-    missing = [k for k, v in (("host", host), ("name", name), ("soundfont", soundfont)) if not v]
+    missing = [k for k, v in (("host", host), ("name", name)) if not v]
     if missing:
         log.error(
             f"missing required setting(s): {', '.join(missing)}. "
@@ -288,10 +295,16 @@ def main():
         )
         sys.exit(2)
 
-    sf_path = Path(str(soundfont)).expanduser()
-    if not sf_path.exists():
-        log.error(f"soundfont not found: {sf_path}")
-        sys.exit(1)
+    # soundfont is only needed for midi band mode. audio band mode plays
+    # stems the host streams over, no soundfont required. so it's optional
+    # now, we just warn if it's missing or bad and let audio mode carry on.
+    sf_path = None
+    if soundfont:
+        cand = Path(str(soundfont)).expanduser()
+        if cand.exists():
+            sf_path = cand
+        else:
+            log.warning(f"soundfont not found: {cand}, midi band mode will be silent")
 
     cache = Path(str(cache_dir)).expanduser()
     fs_dir = Path(str(fluidsynth_dir)).expanduser()
@@ -304,21 +317,40 @@ def main():
         auto_install_dir=fs_dir,
         auto_install=auto_install,
     )
-    if not player.available():
+    # audio band mode can target its own output, falls back to the fluidsynth
+    # device when not set so existing single-device setups keep working
+    audio_out = audio_device if audio_device else device
+    audio_player = AudioPlayer(gain=gain, device=audio_out if audio_out else None)
+
+    midi_ok = player.available()
+    audio_ok = audio_player.available()
+    if not midi_ok and not audio_ok:
+        err = audio_import_error()
         log.error(
-            "fluidsynth not available. install pyfluidsynth and the native fluidsynth library "
-            "(brew install fluid-synth / apt install libfluidsynth3 / choco install fluidsynth)."
+            "this client can't make sound: no usable soundfont for midi mode "
+            "and the audio band deps aren't installed"
+            + (f" ({err})" if err else "")
+            + ". install sounddevice + soundfile + numpy, or point --soundfont "
+            "at a .sf2 file."
         )
         sys.exit(1)
+    if not midi_ok:
+        log.info("no soundfont, this bandmate only plays in audio band mode")
+    if not audio_ok:
+        log.info(
+            "audio band deps missing (sounddevice/soundfile/numpy), this "
+            "bandmate only plays in midi mode"
+        )
 
     print_banner(
         name=str(name),
         host=str(host),
         port=port,
-        soundfont=str(sf_path),
+        soundfont=str(sf_path) if sf_path else "(none, audio band only)",
         gain=gain,
         driver=str(driver) if driver else None,
         device=str(device) if device else None,
+        audio_device=str(audio_device) if audio_device else None,
         cache_dir=str(cache),
         auto_install=auto_install,
         fluidsynth_dir=str(fs_dir),
@@ -330,6 +362,7 @@ def main():
         name=str(name),
         player=player,
         cache_dir=cache,
+        audio_player=audio_player,
     )
     client.on_change = make_status_printer(client.status, log)
 
@@ -359,6 +392,7 @@ def main():
         await stop.wait()
         client.stop()
         player.shutdown()
+        audio_player.shutdown()
 
     try:
         asyncio.run(run())

@@ -17,10 +17,11 @@ import { familyFor } from "../instruments";
 interface Props {
   status: Status | null;
   isHost: boolean;
+  audioMode?: boolean;
   onAction: () => void;
 }
 
-export function Transport({ status, isHost, onAction }: Props) {
+export function Transport({ status, isHost, audioMode, onAction }: Props) {
   const toast = useToast();
   const [busy, setBusy] = useState<string | null>(null);
   const [vol, setVol] = useState(0.5);
@@ -143,14 +144,16 @@ export function Transport({ status, isHost, onAction }: Props) {
           >
             <FontAwesomeIcon icon={faStop} />
           </button>
-          <button
-            className="tbtn tbtn--check"
-            disabled={!isHost || !!busy}
-            onClick={() => run("soundcheck", () => api.soundcheck(8, 120))}
-            title="Soundcheck (sync + warmup)"
-          >
-            <FontAwesomeIcon icon={faCheck} /> check
-          </button>
+          {!audioMode && (
+            <button
+              className="tbtn tbtn--check"
+              disabled={!isHost || !!busy}
+              onClick={() => run("soundcheck", () => api.soundcheck(8, 120))}
+              title="Soundcheck (sync + warmup)"
+            >
+              <FontAwesomeIcon icon={faCheck} /> check
+            </button>
+          )}
         </div>
 
         <div className="transport__vol">

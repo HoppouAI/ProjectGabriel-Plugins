@@ -3,9 +3,10 @@ import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faMusic, faSliders, faRecordVinyl, faTowerBroadcast } from "@fortawesome/free-solid-svg-icons";
 import { api } from "./api";
 import { usePoll } from "./hooks";
-import type { SongEntry, SfPreset } from "./types";
+import type { SongEntry, SfPreset, BandMode } from "./types";
 import { Transport } from "./components/Transport";
 import { Library } from "./components/Library";
+import { AudioLibrary } from "./components/AudioLibrary";
 import { Presets } from "./components/Presets";
 import { SyncPanel } from "./components/SyncPanel";
 import { AssignBoard } from "./components/AssignBoard";
@@ -50,6 +51,27 @@ export function App() {
   const currentSong = status?.song || null;
   const connected = !statusErr;
   const presets = presetsData?.presets || [];
+  const mode: BandMode = status?.mode === "audio" ? "audio" : "midi";
+  const audioMode = mode === "audio";
+  const [modeBusy, setModeBusy] = useState(false);
+
+  const switchMode = useCallback(
+    async (m: BandMode) => {
+      if (modeBusy || m === mode) return;
+      setModeBusy(true);
+      try {
+        await api.setMode(m);
+        setResyncToken((t) => t + 1);
+        refreshStatus();
+        refreshPresets();
+      } catch (e: any) {
+        toast.push(`mode: ${e.message}`, "err");
+      } finally {
+        setModeBusy(false);
+      }
+    },
+    [mode, modeBusy, refreshStatus, refreshPresets, toast],
+  );
 
   // soundfont presets only change when the host swaps its .sf2, so grab them
   // once we know we're the host and hold onto them
@@ -94,6 +116,25 @@ export function App() {
           </div>
         </div>
 
+        {isHost && (
+          <div className="modeswitch" role="group" aria-label="band mode">
+            <button
+              className={`modeswitch__opt${!audioMode ? " is-on" : ""}`}
+              onClick={() => switchMode("midi")}
+              disabled={modeBusy}
+            >
+              MIDI
+            </button>
+            <button
+              className={`modeswitch__opt${audioMode ? " is-on" : ""}`}
+              onClick={() => switchMode("audio")}
+              disabled={modeBusy}
+            >
+              Audio Band
+            </button>
+          </div>
+        )}
+
         <nav className="sidebar__nav">
           {TABS.map((t) => (
             <button
@@ -135,7 +176,7 @@ export function App() {
             </div>
           )}
 
-          {isHost && status?.has_soundfont === false && (
+          {isHost && !audioMode && status?.has_soundfont === false && (
             <div className="banner banner--warn">
               No soundfont on this host, so its synth is <b>silent</b>. Volume changes won't be
               audible here until you point <code>soundfont:</code> at a <code>.sf2</code> file in
@@ -143,7 +184,7 @@ export function App() {
             </div>
           )}
 
-          <Transport status={status} isHost={!!isHost} onAction={refreshStatus} />
+          <Transport status={status} isHost={!!isHost} audioMode={audioMode} onAction={refreshStatus} />
 
           <div className={`view${tab === "board" ? "" : " view--hidden"}`}>
             <AssignBoard
@@ -155,6 +196,7 @@ export function App() {
               trackPrograms={status?.track_programs}
               soundfont={soundfont}
               currentSong={currentSong}
+              audioMode={audioMode}
               disabled={!isHost || !currentSong}
               resyncToken={resyncToken}
               onApplied={refreshStatus}
@@ -163,7 +205,11 @@ export function App() {
 
           <div className={`view${tab === "library" ? "" : " view--hidden"}`}>
             <div className="view__cols">
-              <Library songs={songs} currentSong={currentSong} isHost={!!isHost} onChanged={onChanged} />
+              {audioMode ? (
+                <AudioLibrary currentSong={currentSong} isHost={!!isHost} onChanged={onChanged} />
+              ) : (
+                <Library songs={songs} currentSong={currentSong} isHost={!!isHost} onChanged={onChanged} />
+              )}
               <Presets
                 presets={presets}
                 isHost={!!isHost}

@@ -91,6 +91,10 @@ a clear message.
 - `--device` -- output device name. Blank = system default. Set to a
   specific device (e.g. a virtual audio cable) to route this client's
   audio somewhere specific. See "Multiple instances" below.
+- `--audio-device` -- output device for **audio band mode** (uploaded
+  stems, played through sounddevice). Blank = use `--device`. Set it
+  only if stem playback should go somewhere different than the
+  fluidsynth output.
 
 ## Multiple instances (one bandmate per VRChat window)
 
@@ -114,7 +118,9 @@ output dropdown). If you skip `sounddevice` the device field becomes
 a free-text entry, which still works.
 
 The launcher lets you add as many bandmate cards as you want, each
-with its own name, output device, soundfont and gain slider.
+with its own name, output device, soundfont and gain slider. The
+**Audio out** field on each card targets audio band mode (uploaded
+stems) separately, leave it blank to reuse the Output device.
 Start/stop them individually or use Start all / Stop all. The roster
 persists to `bandmates.yml` and autosaves on quit.
 

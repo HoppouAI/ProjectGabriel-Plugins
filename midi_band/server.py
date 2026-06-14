@@ -20,11 +20,16 @@ from . import midi_utils
 from . import protocol as P
 from . import conductor as _conductor
 from .player import MidiPlayer
+from .audio_player import AudioPlayer, mix_stems
+from .audio_library import AudioLibrary
 
 logger = logging.getLogger(__name__)
 
 # bigger window than duo_song since we ship the full midi over the wire
 READY_TIMEOUT = 3.0
+# audio clients download + decode their stems before acking, the first play
+# of a song can take a while so give them a lot more room than midi.
+AUDIO_READY_TIMEOUT = 30.0
 
 
 def _now() -> float:
@@ -59,6 +64,9 @@ class BandServer:
         presets_path: Optional[Path] = None,
         conductor_key_provider: Optional[Callable[[], str]] = None,
         conductor_model: Optional[str] = None,
+        audio_player: Optional[AudioPlayer] = None,
+        audio_library_dir: Optional[Path] = None,
+        audio_http_port: Optional[int] = None,
     ):
         self.bind = bind or "0.0.0.0"
         self.port = int(port)
@@ -69,6 +77,13 @@ class BandServer:
         self.count_in_beats = max(0, int(count_in_beats))
         self.count_in_bpm = max(20.0, float(count_in_bpm))
         self.on_change = on_change or (lambda: None)
+
+        # audio band mode: a second player + a folder-based stem library.
+        # midi mode is the default, the webui / a tool flips self.mode.
+        self.mode = P.MODE_MIDI
+        self.audio_player = audio_player
+        self.audio_library = AudioLibrary(audio_library_dir) if audio_library_dir else None
+        self.audio_http_port = int(audio_http_port) if audio_http_port else None
 
         self._server: Optional[asyncio.AbstractServer] = None
         self._peers: Dict[asyncio.StreamWriter, _Peer] = {}
@@ -115,6 +130,11 @@ class BandServer:
             self.player.stop_playback()
         except Exception:
             pass
+        if self.audio_player is not None:
+            try:
+                self.audio_player.stop_playback()
+            except Exception:
+                pass
         if self._loop is not None and self._loop.is_running():
             self._loop.call_soon_threadsafe(self._shutdown_async)
 
@@ -130,6 +150,43 @@ class BandServer:
             except Exception:
                 pass
         self._peers.clear()
+
+    # ----- active player / mode -----
+
+    def _active(self):
+        # whichever player drives transport for the current mode. audio
+        # mode falls back to the midi player if the audio stack didn't load.
+        if self.mode == P.MODE_AUDIO and self.audio_player is not None:
+            return self.audio_player
+        return self.player
+
+    def active_status(self) -> dict:
+        return self._active().status()
+
+    def get_mode(self) -> str:
+        return self.mode
+
+    def set_mode(self, mode: str) -> dict:
+        m = P.MODE_AUDIO if str(mode).lower() == P.MODE_AUDIO else P.MODE_MIDI
+        if m == self.mode:
+            return {"result": "ok", "mode": self.mode}
+        if m == P.MODE_AUDIO and self.audio_player is None:
+            return {"result": "error", "message": "audio mode unavailable, install sounddevice + soundfile"}
+        # stop playback and drop the loaded song, track indices don't carry
+        # across modes
+        try:
+            self._active().stop_playback()
+        except Exception:
+            pass
+        self.mode = m
+        self._loaded_song = None
+        self._loaded_path = None
+        self._loaded_info = None
+        self._assignments = {}
+        self._host_tracks = []
+        self._track_programs = {}
+        self.on_change()
+        return {"result": "ok", "mode": self.mode}
 
     # ----- networking -----
 
@@ -154,9 +211,10 @@ class BandServer:
             while not self._stop:
                 await asyncio.sleep(1.0)
                 try:
-                    if not self.player.is_playing():
+                    active = self._active()
+                    if not active.is_playing():
                         continue
-                    pos = self.player.current_position()
+                    pos = active.current_position()
                     payload = P.encode({
                         "type": P.SYNC_TICK,
                         "server_t": _now(),
@@ -290,6 +348,7 @@ class BandServer:
             return {
                 "song": None, "tracks": [], "duration": 0.0,
                 "assignments": {}, "host_tracks": [], "track_programs": {},
+                "mode": self.mode,
             }
         return {
             "song": self._loaded_song,
@@ -298,6 +357,7 @@ class BandServer:
             "assignments": dict(self._assignments),
             "host_tracks": list(self._host_tracks),
             "track_programs": {str(i): p for i, p in self._track_programs.items()},
+            "mode": self.mode,
         }
 
     def list_soundfont_presets(self) -> list:
@@ -331,6 +391,105 @@ class BandServer:
             "tracks": info["tracks"],
             "instruction": (
                 "Now assign tracks to bandmates with assignBandTracks or call "
+                "autoAssignBandTracks for an automatic split, then call startMidiBand."
+            ),
+        }
+
+    # ----- audio band mode -----
+
+    def list_audio_songs(self) -> list:
+        if self.audio_library is None:
+            return []
+        return self.audio_library.list_songs()
+
+    def audio_song_info(self, name: str) -> Optional[dict]:
+        if self.audio_library is None:
+            return None
+        return self.audio_library.song_info(name)
+
+    def create_audio_song(self, name: str) -> dict:
+        if self.audio_library is None:
+            return {"result": "error", "message": "audio library unavailable"}
+        return self.audio_library.create_song(name)
+
+    def add_audio_stem(self, song: str, filename: str, data: bytes) -> dict:
+        if self.audio_library is None:
+            return {"result": "error", "message": "audio library unavailable"}
+        res = self.audio_library.add_stem(song, filename, data)
+        # if the song we just changed is the loaded one, refresh its tracks
+        if res.get("result") == "ok" and self.mode == P.MODE_AUDIO and res.get("song") == self._loaded_song:
+            self.load_audio_song(self._loaded_song)
+        return res
+
+    def rename_audio_stem(self, song: str, index: int, label: str) -> dict:
+        if self.audio_library is None:
+            return {"result": "error", "message": "audio library unavailable"}
+        res = self.audio_library.rename_stem(song, index, label)
+        if res.get("result") == "ok" and self.mode == P.MODE_AUDIO and res.get("song") == self._loaded_song:
+            self.load_audio_song(self._loaded_song)
+        return res
+
+    def delete_audio_stem(self, song: str, index: int) -> dict:
+        if self.audio_library is None:
+            return {"result": "error", "message": "audio library unavailable"}
+        res = self.audio_library.delete_stem(song, index)
+        if res.get("result") == "ok" and self.mode == P.MODE_AUDIO and res.get("song") == self._loaded_song:
+            self.load_audio_song(self._loaded_song)
+        return res
+
+    def delete_audio_song(self, name: str) -> dict:
+        if self.audio_library is None:
+            return {"result": "error", "message": "audio library unavailable"}
+        res = self.audio_library.delete_song(name)
+        if res.get("result") == "ok" and name == self._loaded_song:
+            self._loaded_song = None
+            self._loaded_info = None
+            self._assignments = {}
+            self._host_tracks = []
+            self.on_change()
+        return res
+
+    def audio_stem_path(self, song: str, index: int) -> Optional[Path]:
+        if self.audio_library is None:
+            return None
+        return self.audio_library.stem_path(song, index)
+
+    def load_audio_song(self, name: str) -> dict:
+        if self.audio_library is None:
+            return {"result": "error", "message": "audio library unavailable"}
+        info = self.audio_library.song_info(name)
+        if info is None:
+            return {"result": "error", "message": f"no audio song '{name}'"}
+        stems = info.get("stems", [])
+        if not stems:
+            return {"result": "error", "message": "this song has no stems yet"}
+        tracks = []
+        for s in stems:
+            lbl = s.get("label") or f"stem {s.get('index')}"
+            tracks.append({
+                "index": int(s.get("index")),
+                "name": lbl,
+                "display_label": lbl,
+                "instrument": lbl,
+                "note_count": 1,
+                "duration": float(s.get("duration") or 0.0),
+                "channel": None,
+            })
+        self.mode = P.MODE_AUDIO
+        self._loaded_song = info["name"]
+        self._loaded_path = None
+        self._loaded_info = {"tracks": tracks, "duration": info.get("duration", 0.0)}
+        self._assignments = {}
+        self._host_tracks = []
+        self._track_programs = {}
+        self.on_change()
+        return {
+            "result": "ok",
+            "song": info["name"],
+            "duration": info.get("duration", 0.0),
+            "tracks": tracks,
+            "instruction": (
+                "Now assign stems to bandmates with assignBandTracks or call "
                 "autoAssignBandTracks for an automatic split, then call startMidiBand."
             ),
         }
@@ -489,14 +648,23 @@ class BandServer:
         loaded = self._loaded_song
         out = []
         for name, pr in self._presets.items():
+            pmode = pr.get("mode", P.MODE_MIDI)
+            if pmode != self.mode:
+                continue
             assignments = pr.get("assignments", {}) or {}
             mates = list(assignments.keys())
             missing = [m for m in mates if m not in present]
             song = pr.get("song")
-            available = bool(song) and ((self.library_dir / song).exists() or song == loaded)
+            if pmode == P.MODE_AUDIO:
+                available = bool(song) and self.audio_library is not None and (
+                    self.audio_library.song_info(song) is not None
+                )
+            else:
+                available = bool(song) and ((self.library_dir / song).exists() or song == loaded)
             count = len(pr.get("host_tracks", []) or []) + sum(len(v or []) for v in assignments.values())
             out.append({
                 "name": name,
+                "mode": pmode,
                 "song": song,
                 "members": mates,
                 "track_count": count,
@@ -519,6 +687,7 @@ class BandServer:
         prev = self._presets.get(clean) or {}
         self._presets[clean] = {
             "name": clean,
+            "mode": self.mode,
             "song": self._loaded_song,
             "host_tracks": list(self._host_tracks),
             "assignments": {k: list(v) for k, v in self._assignments.items()},
@@ -534,6 +703,7 @@ class BandServer:
         pr = self._presets.get(clean) or self._presets.get(str(name or "").strip())
         if pr is None:
             return {"result": "error", "message": f"no preset named '{name}'"}
+        pmode = pr.get("mode", P.MODE_MIDI)
         song = pr.get("song")
         if not song:
             return {"result": "error", "message": "this preset has no song"}
@@ -547,11 +717,21 @@ class BandServer:
                 "missing": missing,
                 "message": "waiting on " + ", ".join(missing),
             }
+        # flip into the preset's mode if needed (this clears any loaded song)
+        if pmode != self.mode:
+            sw = self.set_mode(pmode)
+            if sw.get("result") != "ok":
+                return sw
         # make sure the preset's song is the loaded one so indices line up
         if song != self._loaded_song:
-            if not (self.library_dir / song).exists():
-                return {"result": "error", "message": f"'{song}' is not in the library"}
-            res = self.load_song(song)
+            if pmode == P.MODE_AUDIO:
+                if self.audio_library is None or self.audio_library.song_info(song) is None:
+                    return {"result": "error", "message": f"'{song}' is not in the audio library"}
+                res = self.load_audio_song(song)
+            else:
+                if not (self.library_dir / song).exists():
+                    return {"result": "error", "message": f"'{song}' is not in the library"}
+                res = self.load_song(song)
             if res.get("result") != "ok":
                 return res
         # only hand out parts to bandmates who are actually here. anyone
@@ -616,6 +796,8 @@ class BandServer:
         if self._dispatch_lock is None:
             self._dispatch_lock = asyncio.Lock()
         async with self._dispatch_lock:
+            if self.mode == P.MODE_AUDIO:
+                return await self._start_audio_playback_locked()
             return await self._start_playback_locked()
 
     async def _start_playback_locked(self) -> dict:
@@ -716,6 +898,115 @@ class BandServer:
             "peers_nack": nacks,
         }
 
+    async def _start_audio_playback_locked(self) -> dict:
+        if not self._loaded_info or not self._loaded_song:
+            return {"result": "error", "message": "no song loaded"}
+        if self.audio_library is None or self.audio_player is None:
+            return {"result": "error", "message": "audio mode unavailable"}
+        if not self.audio_http_port:
+            return {"result": "error", "message": "audio mode needs the Control Room web server enabled"}
+
+        # nothing assigned: host plays every stem (solo mode)
+        if not self._assignments and not self._host_tracks:
+            self._host_tracks = [t["index"] for t in self._loaded_info["tracks"]]
+
+        info = self.audio_library.song_info(self._loaded_song) or {"stems": []}
+        by_index = {int(s.get("index")): s for s in info.get("stems", [])}
+        duration = self._loaded_info["duration"]
+        tracks = self._loaded_info["tracks"]
+        session = uuid.uuid4().hex[:12]
+
+        def stem_meta(idx):
+            s = by_index.get(int(idx))
+            if not s:
+                return None
+            ext = Path(s.get("file", "")).suffix.lstrip(".") or "wav"
+            return {
+                "index": int(idx),
+                "label": s.get("label"),
+                "sha": s.get("sha"),
+                "ext": ext,
+                "size": s.get("size"),
+                "samplerate": s.get("samplerate"),
+                "duration": s.get("duration"),
+            }
+
+        peers_at_prepare = list(self._peers.values())
+        for p in peers_at_prepare:
+            p.ready_session = None
+            p.nack_reason = None
+
+        for peer in peers_at_prepare:
+            idxs = self._assignments.get(peer.name, [])
+            stems = [m for m in (stem_meta(i) for i in idxs) if m]
+            try:
+                peer.writer.write(P.encode({
+                    "type": P.PREPARE,
+                    "mode": P.MODE_AUDIO,
+                    "session": session,
+                    "song": self._loaded_song,
+                    "http_port": int(self.audio_http_port),
+                    "stems": stems,
+                    "duration": duration,
+                }))
+                await peer.writer.drain()
+            except Exception as e:
+                logger.warning(f"midi_band: audio prepare to {peer.name} failed: {e}")
+                peer.nack_reason = "send failed"
+                peer.ready_session = session
+
+        # mix the host's own stems while clients fetch theirs. run it off the
+        # loop so decoding a fat wav doesn't stall peer acks coming in.
+        host_tracks = self._host_tracks
+        host_labels = [tracks[i].get("display_label") for i in host_tracks if 0 <= i < len(tracks)]
+        host_mix, host_sr = None, 0
+        if host_tracks:
+            paths = [p for p in (self.audio_library.stem_path(self._loaded_song, i) for i in host_tracks) if p]
+            try:
+                host_mix, host_sr = await asyncio.get_running_loop().run_in_executor(
+                    None, mix_stems, paths
+                )
+            except Exception as e:
+                logger.error(f"midi_band: host audio mix failed: {e}")
+
+        # wait for clients to ack once their stems are decoded and ready
+        if peers_at_prepare:
+            deadline = _now() + AUDIO_READY_TIMEOUT
+            while _now() < deadline:
+                pending = sum(1 for p in peers_at_prepare if p.ready_session != session)
+                if pending == 0:
+                    break
+                await asyncio.sleep(0.1)
+
+        ready_count = sum(
+            1 for p in peers_at_prepare
+            if p.ready_session == session and p.nack_reason is None
+        )
+        nacks = [f"{p.name}: {p.nack_reason}" for p in peers_at_prepare if p.nack_reason]
+
+        start_at = _now() + self.lead
+        await self._broadcast(P.encode({
+            "type": P.PLAY,
+            "session": session,
+            "start_at_server_t": start_at,
+        }))
+
+        if host_mix is not None and len(host_mix):
+            self.audio_player.schedule_audio(
+                host_mix, host_sr, start_at, self._loaded_song, host_labels, duration
+            )
+        self.on_change()
+        return {
+            "result": "ok",
+            "session": session,
+            "song": self._loaded_song,
+            "starts_in_seconds": round(self.lead, 2),
+            "host_tracks": host_labels,
+            "peers_total": len(peers_at_prepare),
+            "peers_ready": ready_count,
+            "peers_nack": nacks,
+        }
+
     async def soundcheck(self, duration: float = 10.0, bpm: float = 120.0) -> dict:
         # synth-only sync test: each band member plays a percussion note on
         # alternating beats at given bpm, for `duration` seconds. doubles as
@@ -773,7 +1064,7 @@ class BandServer:
 
     async def stop_playback(self) -> dict:
         try:
-            self.player.stop_playback()
+            self._active().stop_playback()
         except Exception:
             pass
         await self._broadcast(P.encode({"type": P.STOP}))
@@ -783,12 +1074,12 @@ class BandServer:
     async def pause_playback(self) -> dict:
         ok = False
         try:
-            ok = self.player.pause()
+            ok = self._active().pause()
         except Exception as e:
             logger.warning(f"midi_band: host pause failed: {e}")
         await self._broadcast(P.encode({"type": P.PAUSE}))
         self.on_change()
-        return {"result": "ok" if ok else "noop", "paused_at": self.player.status().get("position")}
+        return {"result": "ok" if ok else "noop", "paused_at": self._active().status().get("position")}
 
     async def resume_playback(self) -> dict:
         start_at = _now() + self.lead
@@ -797,7 +1088,7 @@ class BandServer:
             "start_at_server_t": start_at,
         }))
         try:
-            self.player.resume(start_at)
+            self._active().resume(start_at)
         except Exception as e:
             logger.warning(f"midi_band: host resume failed: {e}")
         self.on_change()
@@ -805,8 +1096,14 @@ class BandServer:
 
     async def set_volume(self, level: float) -> dict:
         # master fader: level is 0.0 (silent) to 2.0 (loud-ish), 0.5 is default.
-        # sets everyone, host and clients, to the same synth gain.
+        # sets everyone, host and clients, to the same gain. set both local
+        # players so the level sticks across a mode switch.
         applied = self.player.set_gain(level)
+        if self.audio_player is not None:
+            try:
+                self.audio_player.set_gain(level)
+            except Exception:
+                pass
         await self._broadcast(P.encode({"type": P.VOLUME, "gain": applied}))
         self.on_change()
         return {"result": "ok", "gain": applied}

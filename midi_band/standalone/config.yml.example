@@ -28,6 +28,9 @@ device: ""               # blank = system default. set to a virtual audio cable
                          # name to route this client somewhere specific. eg
                          # "CABLE Input (VB-Audio Virtual Cable)" on Windows.
                          # see README for the multi-instance setup.
+audio_device: ""         # audio band mode only (uploaded stems). blank = use
+                         # the `device` above. set it if stem playback should
+                         # go to a different output than the fluidsynth one.
 cache_dir: "midi_cache"  # MIDI files received from the host land here
 fluidsynth_dir: "vendor/fluidsynth"
 auto_install_fluidsynth: true

@@ -27,6 +27,11 @@ ASSIGNMENTS = "assignments"
 SOUNDCHECK = "soundcheck"
 ERROR = "error"
 
+# band modes. carried on PREPARE so the client knows whether it's getting a
+# midi file + track indices or a set of audio stems to fetch over http.
+MODE_MIDI = "midi"
+MODE_AUDIO = "audio"
+
 
 def encode(msg: dict) -> bytes:
     return (json.dumps(msg) + "\n").encode("utf-8")

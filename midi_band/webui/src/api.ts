@@ -6,6 +6,9 @@ import type {
   PresetLoadResult,
   ConductorResult,
   SoundfontResponse,
+  AudioSongsResponse,
+  ModeResponse,
+  BandMode,
 } from "./types";
 
 async function req<T>(path: string, opts: RequestInit = {}): Promise<T> {
@@ -75,4 +78,27 @@ export const api = {
 
   remove: (name: string) =>
     req(`/api/songs/${encodeURIComponent(name)}`, { method: "DELETE" }),
+
+  // ----- audio band mode -----
+  getMode: () => req<ModeResponse>("/api/mode"),
+  setMode: (mode: BandMode) => postJson<ModeResponse>("/api/mode", { mode }),
+  loadAudio: (title: string) => postJson("/api/load_audio", { title }),
+  audioSongs: () => req<AudioSongsResponse>("/api/audio_songs"),
+  createAudioSong: (name: string) =>
+    postJson("/api/audio_songs/create", { name }),
+  renameStem: (song: string, index: number, label: string) =>
+    postJson("/api/audio_songs/rename_stem", { song, index, label }),
+  deleteStem: (song: string, index: number) =>
+    postJson("/api/audio_songs/delete_stem", { song, index }),
+  deleteAudioSong: (name: string) =>
+    req(`/api/audio_songs/${encodeURIComponent(name)}`, { method: "DELETE" }),
+  // one stem per request, the host detects the part label from the filename
+  uploadStem: async (song: string, file: File) => {
+    const fd = new FormData();
+    fd.append("file", file, file.name);
+    return req<{ result: string; song: string; stem: { label: string } }>(
+      `/api/audio_songs/upload?song=${encodeURIComponent(song)}`,
+      { method: "POST", body: fd },
+    );
+  },
 };

@@ -723,6 +723,174 @@ button {
   flex: none;
 }
 
+/* ---------- audio stem songs ---------- */
+
+.song--stack {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+}
+.song__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 11px;
+}
+.song__expand {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  border-radius: 6px;
+  font-size: 12px;
+}
+.song__expand:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
+}
+.song--stack .song__main {
+  flex: 1;
+  cursor: pointer;
+}
+.stems {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 4px 11px 11px 11px;
+  border-top: 1px solid var(--line);
+  background: var(--navy-850);
+}
+.stem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 7px;
+  background: var(--navy-750);
+  border: 1px solid var(--line);
+}
+.stem__label {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.stem__input {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--navy-900);
+  border: 1px solid var(--gold);
+  border-radius: 6px;
+  padding: 3px 6px;
+}
+.stem__meta {
+  flex: none;
+  font-size: 11px;
+  color: var(--faint);
+}
+.stem__btns {
+  flex: none;
+  display: flex;
+  gap: 4px;
+}
+.iconbtn {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  background: var(--navy-800);
+  color: var(--muted);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 11px;
+  transition: color 0.12s ease, border-color 0.12s ease;
+}
+.iconbtn:hover {
+  color: var(--text);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+.iconbtn--danger:hover {
+  color: var(--magenta);
+  border-color: var(--magenta);
+}
+.stem-drop {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 9px;
+  margin-top: 2px;
+  border: 2px dashed color-mix(in srgb, var(--gold) 40%, var(--line));
+  border-radius: 8px;
+  background: var(--navy-900);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+.stem-drop:hover {
+  border-color: var(--gold);
+  color: var(--text);
+}
+.stem-drop--busy {
+  opacity: 0.7;
+}
+.stem-drop__icon {
+  color: var(--gold);
+}
+
+/* ---------- mode switch ---------- */
+
+.modeswitch {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  margin-bottom: 14px;
+  border-radius: var(--r-sm);
+  background: var(--navy-850);
+  border: 2px solid var(--line);
+}
+.modeswitch__opt {
+  flex: 1;
+  padding: 7px 6px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-family: var(--font-display);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: background 0.14s ease, color 0.14s ease;
+}
+.modeswitch__opt:hover:not(.is-on) {
+  color: var(--text);
+}
+.modeswitch__opt.is-on {
+  background: var(--gold);
+  color: var(--navy-900);
+}
+.modeswitch__opt:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 /* ---------- presets ---------- */
 
 .presets__save {

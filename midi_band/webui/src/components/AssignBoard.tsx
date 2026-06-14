@@ -41,6 +41,7 @@ interface Props {
   trackPrograms?: Record<string, TrackProgram | number>;
   soundfont?: SfPreset[];
   currentSong?: string | null;
+  audioMode?: boolean;
   disabled: boolean;
   resyncToken?: number;
   onApplied: () => void;
@@ -192,6 +193,7 @@ export function AssignBoard({
   trackPrograms,
   soundfont,
   currentSong,
+  audioMode,
   disabled,
   resyncToken,
   onApplied,
@@ -523,42 +525,46 @@ export function AssignBoard({
                 <span className="menu__track-name" title={menuTrack.display_label || menuTrack.name}>
                   {menuTrack.display_label || menuTrack.instrument || menuTrack.name || `track ${menu.idx}`}
                 </span>
-                <span className="menu__track-notes">{menuTrack.note_count} notes</span>
+                {!audioMode && (
+                  <span className="menu__track-notes">{menuTrack.note_count} notes</span>
+                )}
               </div>
             )}
-            <div className="menu__inst">
-              <span className="menu__inst-label">plays as</span>
-              <select
-                className="menu__select"
-                value={menuOverride}
-                disabled={disabled}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  if (!v) {
-                    onTrackInstrument(menu.idx, null);
-                  } else {
-                    const [b, p] = v.split(":").map(Number);
-                    onTrackInstrument(menu.idx, p, b);
-                  }
-                }}
-              >
-                <option value="">Default (from MIDI)</option>
-                {menuOptions.map((g) => (
-                  <optgroup key={g.label} label={g.label}>
-                    {g.options.map((o) => (
-                      <option key={o.value} value={o.value}>
-                        {o.label}
-                      </option>
-                    ))}
-                  </optgroup>
-                ))}
-              </select>
-              <span className="menu__inst-hint">
-                {menuIsDrum && !menuOptions.length
-                  ? "no soundfont kits available"
-                  : "applies on next play"}
-              </span>
-            </div>
+            {!audioMode && (
+              <div className="menu__inst">
+                <span className="menu__inst-label">plays as</span>
+                <select
+                  className="menu__select"
+                  value={menuOverride}
+                  disabled={disabled}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (!v) {
+                      onTrackInstrument(menu.idx, null);
+                    } else {
+                      const [b, p] = v.split(":").map(Number);
+                      onTrackInstrument(menu.idx, p, b);
+                    }
+                  }}
+                >
+                  <option value="">Default (from MIDI)</option>
+                  {menuOptions.map((g) => (
+                    <optgroup key={g.label} label={g.label}>
+                      {g.options.map((o) => (
+                        <option key={o.value} value={o.value}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </select>
+                <span className="menu__inst-hint">
+                  {menuIsDrum && !menuOptions.length
+                    ? "no soundfont kits available"
+                    : "applies on next play"}
+                </span>
+              </div>
+            )}
             <div className="menu__head">
               plays on {menuShare === 0 ? "nobody yet" : `${menuShare} ${menuShare === 1 ? "bandmate" : "bandmates"}`}
             </div>

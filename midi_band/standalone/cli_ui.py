@@ -104,6 +104,7 @@ def print_banner(
     gain: float,
     driver: Optional[str],
     device: Optional[str] = None,
+    audio_device: Optional[str] = None,
     cache_dir: str,
     auto_install: bool,
     fluidsynth_dir: str,
@@ -119,6 +120,8 @@ def print_banner(
     _kv("Gain", f"{gain:.2f}", C.B_WHITE)
     _kv("Audio Driver", driver or "auto", C.B_WHITE)
     _kv("Audio Device", device or "default", C.B_WHITE)
+    if audio_device and audio_device != device:
+        _kv("Stem Device", audio_device, C.B_WHITE)
     _kv("Cache", _short_path(cache_dir))
     print()
 

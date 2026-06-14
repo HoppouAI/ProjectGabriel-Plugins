@@ -6,9 +6,18 @@ bass to another, lead to itself, etc), and on `startMidiBand` every
 bandmate plays their assigned tracks at the exact same moment. Each
 side shows the song name and its own track list in the VRChat chatbox.
 
+There are two modes, flipped from a toggle in the web control room:
+
+- **MIDI band** (default): the host ships a MIDI file, every bandmate
+  synthesizes their assigned tracks locally through a soundfont.
+- **Audio band**: you upload real audio **stems** (vocals, bass, drums,
+  guitar, synth, up to 12 per song, eg the split output of a stem
+  separator), the host streams each bandmate their assigned stems and
+  everyone plays them back in sync. No soundfont needed for this mode.
+
 A standalone client ships in the same folder so people can join the
 band without installing Project Gabriel at all, just Python plus a
-soundfont.
+soundfont (or, for audio band mode, not even that).
 
 ## How it works
 
@@ -26,6 +35,13 @@ soundfont.
   so no audio streams cross the network, just the MIDI file (small,
   usually <100KB) and protocol messages.
 
+In **audio band mode** the flow is the same (assign, ready, synced
+play) but instead of a MIDI file the host hands each bandmate a short
+list of stems to fetch. Bandmates download only the stems assigned to
+them over HTTP from the host's control room server, decode and mix them
+locally, then play the mix against the same absolute start timestamp.
+Stems are cached by content hash so they only download once.
+
 ## Install
 
 On every machine that will be in the band:
@@ -35,8 +51,12 @@ On every machine that will be in the band:
 
 2. Install the Python deps:
    ```powershell
-   .\bin\uv.exe pip install mido pyfluidsynth
+   .\bin\uv.exe pip install mido pyfluidsynth sounddevice soundfile numpy imageio-ffmpeg
    ```
+   (`sounddevice`, `soundfile`, `numpy` and `imageio-ffmpeg` are only
+   needed for **audio band mode**. Skip them if you only care about MIDI
+   band mode. `imageio-ffmpeg` is host-only, it transcodes uploaded
+   mp3/m4a stems to wav.)
 
 3. Install the **native** fluidsynth library (pyfluidsynth is just
    bindings, the real synth is a C library). On Windows you can skip
@@ -82,6 +102,7 @@ plugins:
     schedule_lead_seconds: 1.5
     synth_gain: 0.5
     audio_driver: ""           # autodetect (forced to dsound on Windows)
+    audio_device: ""           # output device for audio band mode (name or index)
     chatbox_priority: 25
     webui_enabled: true        # web control room on the host
     webui_bind: 0.0.0.0
@@ -103,6 +124,11 @@ that should join the band as an additional musician.
 When `webui_enabled: true` the host serves a small DAW-style control
 room at `http://<host_ip>:<webui_port>/` (default port 8783). It's a
 single-page app, no build step needed, the host ships a prebuilt copy.
+
+A **MIDI / Audio Band** toggle in the top-left flips the whole control
+room between the two modes. Switching modes stops playback and clears
+the loaded song (track numbers don't carry across modes). Presets are
+filtered to the active mode so you only see ones you can actually load.
 
 What you can do from it:
 
@@ -146,6 +172,50 @@ What you can do from it:
 
 No auth, so only enable it on a trusted LAN. Set
 `webui_bind: 127.0.0.1` to keep it local-only.
+
+## Audio band mode
+
+Flip the **Audio Band** toggle in the control room to play real audio
+stems instead of synthesized MIDI. Same band, same sync, same assign
+board, you're just handing out audio files instead of MIDI tracks.
+
+How to use it:
+
+1. Toggle the control room to **Audio Band**.
+2. In the Library tab, type a song name and hit **Add** to make an
+   empty stem song.
+3. Expand the song and drop its stems into the uploader (one row per
+   file, up to 12). Accepts `.wav`, `.flac`, `.ogg`, plus `.mp3`,
+   `.m4a`, `.aac` (those get transcoded to wav on upload, needs
+   `imageio-ffmpeg`). Each stem's part name (vocals, bass, drums...) is
+   auto-detected from the filename, eg a file like
+   `song_(vocals)_BS-Roformer.wav` becomes the "vocals" stem. Click the
+   pencil to rename a stem, the trash to remove one.
+4. Hit **Load** on the song. Each stem shows up as an assignable track
+   on the board.
+5. Assign stems to bandmates exactly like MIDI tracks, drag chips or use
+   the `...` menu (you can still stack the same stem on several
+   bandmates, or let the AI conductor split them). The per-track
+   instrument picker is hidden in this mode, stems are already audio.
+6. Hit play. Each bandmate downloads just their assigned stems from the
+   host, mixes them, and everyone starts together.
+
+Notes:
+
+- Stems are streamed over HTTP from the host's control room server, so
+  `webui_enabled` must be on (it is by default) for clients to fetch
+  them. Host-local playback works either way.
+- Bandmates cache downloaded stems by content hash under
+  `<cache_dir>/stems/`, so re-playing a song doesn't re-download.
+- Stem songs live on the host under
+  `data/plugins/midi_band/audio_songs/<song>/` with a `manifest.json`
+  plus the stem files. Safe to back up or hand-edit.
+- Pick the output device for audio band mode with `audio_device:` in
+  config (name substring or device index), same idea as the MIDI
+  `audio_driver`/device. Leave blank for the system default.
+- Needs `sounddevice`, `soundfile` and `numpy` installed. If they're
+  missing the toggle reports audio mode is unavailable and MIDI mode
+  keeps working.
 
 ## Tools the AI can call (host only)
 
@@ -219,6 +289,9 @@ displays (10/20) but above generic alerts.
   stops the current one first.
 - MIDI files travel over a single JSON line as base64. Files larger
   than ~16MB will be rejected by the asyncio reader limit. Real songs
-  are usually <200KB, this is rarely an issue.
-- No audio streaming. If you want vocals or sampled audio, use the
-  `duo_song` plugin instead.
+  are usually <200KB, this is rarely an issue. (Audio stems don't go
+  through this path, they stream over HTTP instead.)
+- Audio band mode mixes a bandmate's assigned stems down to one stereo
+  buffer per machine, so individual stem volume isn't adjustable mid
+  song, only the master. Split a part across machines if you want
+  independent control.

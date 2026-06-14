@@ -32,6 +32,7 @@ except ImportError:
 from .chatbox import BandChatbox
 from .client import BandClient
 from .player import MidiPlayer
+from .audio_player import AudioPlayer
 from .server import BandServer
 from .webui_server import WebUiServer
 
@@ -66,8 +67,8 @@ def _load_local_config(plugin_dir: Path) -> Dict[str, Any]:
 
 class MidiBandPlugin(Plugin):
     name = "midi_band"
-    version = "0.10.0"
-    description = "Multiple Gabriel instances on a LAN form a band, each plays different MIDI tracks of the same song in sync via a soundfont"
+    version = "0.15.0"
+    description = "Multiple Gabriel instances on a LAN form a band, each plays different MIDI tracks (or audio stems) of the same song in sync"
     author = "HoppouAI"
 
     def setup(self, ctx: PluginContext):
@@ -87,6 +88,7 @@ class MidiBandPlugin(Plugin):
         lead = float(cfg("schedule_lead_seconds", 1.5) or 1.5)
         gain = float(cfg("synth_gain", 0.5) or 0.5)
         driver = cfg("audio_driver")
+        audio_device = cfg("audio_device")
         chatbox_priority = int(cfg("chatbox_priority", 25) or 25)
         count_in_beats = int(cfg("count_in_beats", 4) if cfg("count_in_beats") is not None else 4)
         count_in_bpm = float(cfg("count_in_bpm", 120.0) or 120.0)
@@ -127,7 +129,14 @@ class MidiBandPlugin(Plugin):
             auto_install=auto_install,
         )
 
+        # audio band mode shares the same sync logic, just a different player.
+        audio_player = AudioPlayer(gain=gain, device=audio_device)
+        audio_songs_dir = ctx.data_dir() / "audio_songs"
+
         if role == "host":
+            webui_enabled = bool(cfg("webui_enabled", True))
+            webui_bind = str(cfg("webui_bind", "0.0.0.0") or "0.0.0.0")
+            webui_port = int(cfg("webui_port", 8783) or 8783)
             server = BandServer(
                 bind=bind,
                 port=port,
@@ -140,21 +149,22 @@ class MidiBandPlugin(Plugin):
                 presets_path=ctx.data_dir() / "presets.json",
                 conductor_key_provider=conductor_key,
                 conductor_model=conductor_model,
+                audio_player=audio_player,
+                audio_library_dir=audio_songs_dir,
+                audio_http_port=webui_port,
             )
             BandTools._server = server
             BandTools._client = None
             # nudge change listeners when a song ends so the chatbox /
             # webui blank out immediately instead of waiting for poll
             player.on_finished = server.on_change
+            audio_player.on_finished = server.on_change
             chatbox = BandChatbox(lambda: _host_chatbox_status(server))
             ctx.subscribe("startup", lambda: server.start())
             ctx.subscribe("shutdown", lambda: server.stop())
             self._server = server
             self._client = None
 
-            webui_enabled = bool(cfg("webui_enabled", True))
-            webui_bind = str(cfg("webui_bind", "0.0.0.0") or "0.0.0.0")
-            webui_port = int(cfg("webui_port", 8783) or 8783)
             if webui_enabled:
                 webui = WebUiServer(
                     bind=webui_bind, port=webui_port,
@@ -173,10 +183,12 @@ class MidiBandPlugin(Plugin):
                 name=instance_name,
                 player=player,
                 cache_dir=cache_dir,
+                audio_player=audio_player,
             )
             BandTools._server = None
             BandTools._client = client
             player.on_finished = client.on_change
+            audio_player.on_finished = client.on_change
             chatbox = BandChatbox(lambda: client.status())
             ctx.subscribe("startup", lambda: client.start())
             ctx.subscribe("shutdown", lambda: client.stop())
@@ -190,6 +202,7 @@ class MidiBandPlugin(Plugin):
             ctx.logger.warning(f"midi_band: chatbox registration failed: {e}")
 
         ctx.subscribe("shutdown", lambda: player.shutdown())
+        ctx.subscribe("shutdown", lambda: audio_player.shutdown())
 
         if not player.available():
             if soundfont is None:

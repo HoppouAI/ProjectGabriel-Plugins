@@ -2,7 +2,8 @@
 
 Spawn and manage multiple standalone_client.py instances from one
 nice dark-themed window. Each row is one bandmate with its own audio
-output device, soundfont and gain. Roster persists to bandmates.yml.
+output device, optional audio band mode output, soundfont and gain.
+Roster persists to bandmates.yml.
 
 Run:
     uv run launcher_gui.py
@@ -218,11 +219,27 @@ class BandmateCard(ctk.CTkFrame):
             self.device_widget = ctk.CTkEntry(mid, textvariable=self.device_var, width=320, height=30)
         self.device_widget.grid(row=0, column=1, sticky="ew", padx=(8, 0))
 
-        ctk.CTkLabel(mid, text="Soundfont", width=60, anchor="w", text_color=COL_TEXT_DIM).grid(
+        # audio band mode plays uploaded stems through sounddevice, which can
+        # target a different output than fluidsynth. blank = same as Output.
+        ctk.CTkLabel(mid, text="Audio out", width=60, anchor="w", text_color=COL_TEXT_DIM).grid(
             row=1, column=0, sticky="w", pady=(8, 0)
         )
+        self.audio_device_var = ctk.StringVar(value=str(data.get("audio_device") or ""))
+        if devices:
+            self.audio_device_widget = ctk.CTkComboBox(
+                mid, values=[""] + devices, variable=self.audio_device_var, width=320, height=30,
+            )
+        else:
+            self.audio_device_widget = ctk.CTkEntry(
+                mid, textvariable=self.audio_device_var, width=320, height=30,
+            )
+        self.audio_device_widget.grid(row=1, column=1, sticky="ew", padx=(8, 0), pady=(8, 0))
+
+        ctk.CTkLabel(mid, text="Soundfont", width=60, anchor="w", text_color=COL_TEXT_DIM).grid(
+            row=2, column=0, sticky="w", pady=(8, 0)
+        )
         sf_row = ctk.CTkFrame(mid, fg_color="transparent")
-        sf_row.grid(row=1, column=1, sticky="ew", padx=(8, 0), pady=(8, 0))
+        sf_row.grid(row=2, column=1, sticky="ew", padx=(8, 0), pady=(8, 0))
         sf_row.grid_columnconfigure(0, weight=1)
         self.sf_var = ctk.StringVar(value=str(data.get("soundfont") or ""))
         ctk.CTkEntry(sf_row, textvariable=self.sf_var, height=30).grid(row=0, column=0, sticky="ew")
@@ -288,6 +305,7 @@ class BandmateCard(ctk.CTkFrame):
         return {
             "name": self.name_var.get().strip(),
             "device": self.device_var.get().strip(),
+            "audio_device": self.audio_device_var.get().strip(),
             "soundfont": self.sf_var.get().strip(),
             "gain": float(self.gain_var.get()),
         }
@@ -309,6 +327,7 @@ class BandmateCard(ctk.CTkFrame):
         sf = self.sf_var.get().strip() or shared.get("soundfont", "").strip()
         name = self.name_var.get().strip()
         device = self.device_var.get().strip()
+        audio_device = self.audio_device_var.get().strip()
 
         if not host or not name or not sf:
             messagebox.showerror(
@@ -338,6 +357,8 @@ class BandmateCard(ctk.CTkFrame):
             cmd += ["--driver", driver]
         if device:
             cmd += ["--device", device]
+        if audio_device:
+            cmd += ["--audio-device", audio_device]
 
         creationflags = 0
         if sys.platform.startswith("win"):
@@ -561,7 +582,7 @@ class LauncherApp(ctk.CTk):
         self.cards.append(card)
         # save whenever fields on the card change so device/name/sf/gain
         # are always persisted, no need to remember to hit Save.
-        for var in (card.name_var, card.device_var, card.sf_var, card.gain_var):
+        for var in (card.name_var, card.device_var, card.audio_device_var, card.sf_var, card.gain_var):
             try:
                 var.trace_add("write", lambda *_: self._schedule_save())
             except Exception:

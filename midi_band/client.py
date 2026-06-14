@@ -11,8 +11,10 @@ import base64
 import collections
 import logging
 import time
+import urllib.request
 from pathlib import Path
 from typing import Callable, List, Optional
+from urllib.parse import quote
 
 from . import midi_utils
 from . import protocol as P
@@ -41,11 +43,13 @@ class BandClient:
         player: MidiPlayer,
         cache_dir: Optional[Path] = None,
         on_change: Optional[Callable[[], None]] = None,
+        audio_player=None,
     ):
         self.host = host
         self.port = int(port)
         self.name = name or "musician"
         self.player = player
+        self.audio_player = audio_player
         self.cache_dir = cache_dir
         self.on_change = on_change or (lambda: None)
 
@@ -55,6 +59,11 @@ class BandClient:
         self._stop = False
         self._connected = False
         self._server_offset = 0.0  # add to local monotonic to get server_t
+
+        # which player the current session drives. flips to the audio player
+        # when a PREPARE arrives tagged mode=audio.
+        self._active = player
+        self._pending_mode: str = P.MODE_MIDI
 
         # cache of last prepare so play can use it
         self._pending_session: Optional[str] = None
@@ -66,6 +75,9 @@ class BandClient:
         self._pending_duration: float = 0.0
         self._pending_count_in_beats: int = 0
         self._pending_count_in_bpm: float = 120.0
+        # audio session staging
+        self._pending_mix = None
+        self._pending_sr: int = 0
         self._last_rtt: float = 0.0
         self._last_jitter: float = 0.0  # deviation of latest offset sample from smoothed
         self._sync_samples: collections.deque = collections.deque(maxlen=SYNC_SAMPLE_WINDOW)
@@ -91,6 +103,11 @@ class BandClient:
             self.player.stop_playback()
         except Exception:
             pass
+        if self.audio_player is not None:
+            try:
+                self.audio_player.stop_playback()
+            except Exception:
+                pass
         if self._writer is not None:
             try:
                 self._writer.close()
@@ -102,7 +119,7 @@ class BandClient:
             self._ping_task.cancel()
 
     def status(self) -> dict:
-        s = self.player.status()
+        s = self._active.status()
         return {
             "connected": self._connected,
             "name": self.name,
@@ -240,12 +257,12 @@ class BandClient:
             await self._handle_play(msg)
             return
         if kind == P.STOP:
-            self.player.stop_playback()
+            self._active.stop_playback()
             self.on_change()
             return
         if kind == P.PAUSE:
             try:
-                self.player.pause()
+                self._active.pause()
             except Exception as e:
                 logger.warning(f"midi_band: client pause failed: {e}")
             self.on_change()
@@ -254,7 +271,7 @@ class BandClient:
             start_at_server = float(msg.get("start_at_server_t") or 0.0)
             local_start = start_at_server - self._server_offset
             try:
-                self.player.resume(local_start)
+                self._active.resume(local_start)
             except Exception as e:
                 logger.warning(f"midi_band: client resume failed: {e}")
             self.on_change()
@@ -263,7 +280,10 @@ class BandClient:
             try:
                 g = msg.get("gain")
                 # don't let a 0 (full mute) fall through to a default
-                self.player.set_gain(0.5 if g is None else float(g))
+                gain = 0.5 if g is None else float(g)
+                self.player.set_gain(gain)
+                if self.audio_player is not None:
+                    self.audio_player.set_gain(gain)
             except Exception:
                 pass
             self.on_change()
@@ -282,7 +302,7 @@ class BandClient:
             logger.warning(f"midi_band: server error: {msg.get('message')}")
 
     def _handle_sync_tick(self, msg: dict):
-        if not self.player.is_playing():
+        if not self._active.is_playing():
             return
         try:
             server_t = float(msg.get("server_t"))
@@ -293,7 +313,7 @@ class BandClient:
         local_now = time.monotonic()
         server_now = local_now + self._server_offset
         expected_pos = server_pos + (server_now - server_t)
-        actual_pos = self.player.current_position()
+        actual_pos = self._active.current_position()
         drift = expected_pos - actual_pos  # positive => we're behind
         ad = abs(drift)
         if ad < SYNC_NUDGE_THRESHOLD_S:
@@ -302,7 +322,7 @@ class BandClient:
             # too far gone for a smooth nudge, hard re-seek to the server's
             # current position immediately. Restart playback from there.
             try:
-                self.player.seek_to(expected_pos, start_at_local=local_now)
+                self._active.seek_to(expected_pos, start_at_local=local_now)
                 logger.info(f"midi_band: hard re-sync, jumped {drift*1000:.0f}ms")
             except Exception as e:
                 logger.warning(f"midi_band: hard re-sync failed: {e}")
@@ -312,11 +332,16 @@ class BandClient:
         step = max(-SYNC_NUDGE_MAX_PER_TICK, min(SYNC_NUDGE_MAX_PER_TICK, drift))
         # if we're behind (drift > 0), shift scheduled_start EARLIER => events fire sooner
         try:
-            self.player.nudge(-step)
+            self._active.nudge(-step)
         except Exception:
             pass
 
     async def _handle_prepare(self, msg: dict):
+        if str(msg.get("mode") or P.MODE_MIDI) == P.MODE_AUDIO:
+            return await self._handle_prepare_audio(msg)
+        # midi session, make sure the active player is the synth
+        self._active = self.player
+        self._pending_mode = P.MODE_MIDI
         session = str(msg.get("session") or "")
         song = str(msg.get("song") or "")
         file_b64 = str(msg.get("file_b64") or "")
@@ -376,6 +401,8 @@ class BandClient:
         if session != self._pending_session:
             logger.warning(f"midi_band: play for unknown session {session}")
             return
+        if self._pending_mode == P.MODE_AUDIO:
+            return await self._handle_play_audio(msg)
         if not self._pending_tracks:
             # nothing to do this round
             return
@@ -400,6 +427,132 @@ class BandClient:
             count_in_lead=count_in_lead,
         )
         self.on_change()
+
+    # ----- audio band mode -----
+
+    async def _handle_prepare_audio(self, msg: dict):
+        session = str(msg.get("session") or "")
+        song = str(msg.get("song") or "")
+        http_port = int(msg.get("http_port") or 0)
+        duration = float(msg.get("duration") or 0.0)
+        stems = list(msg.get("stems") or [])
+        writer = self._writer
+        if writer is None:
+            return
+        self._active = self.audio_player or self.player
+        self._pending_mode = P.MODE_AUDIO
+        self._pending_session = session
+        self._pending_song = song
+        self._pending_duration = duration
+        self._pending_track_names = [str(s.get("label") or "") for s in stems]
+        self._pending_mix = None
+        self._pending_sr = 0
+        if not stems:
+            # not assigned any stems this round, ack so the host doesnt block.
+            try:
+                writer.write(P.encode({"type": P.READY, "session": session}))
+                await writer.drain()
+            except Exception:
+                pass
+            return
+        if self.audio_player is None or not self.audio_player.available():
+            try:
+                writer.write(P.encode({
+                    "type": P.NACK, "session": session,
+                    "reason": "audio support not installed",
+                }))
+                await writer.drain()
+            except Exception:
+                pass
+            return
+        try:
+            loop = asyncio.get_running_loop()
+            mix, sr = await loop.run_in_executor(
+                None, self._prepare_audio_blocking, song, http_port, stems
+            )
+        except Exception as e:
+            logger.error(f"midi_band: audio prepare failed: {e}")
+            try:
+                writer.write(P.encode({
+                    "type": P.NACK, "session": session,
+                    "reason": "stem fetch failed",
+                }))
+                await writer.drain()
+            except Exception:
+                pass
+            return
+        if mix is None:
+            try:
+                writer.write(P.encode({
+                    "type": P.NACK, "session": session,
+                    "reason": "stem decode failed",
+                }))
+                await writer.drain()
+            except Exception:
+                pass
+            return
+        self._pending_mix = mix
+        self._pending_sr = sr
+        # quick offset refresh, then ready
+        await self._ping_burst()
+        try:
+            writer.write(P.encode({"type": P.READY, "session": session}))
+            await writer.drain()
+        except Exception:
+            pass
+        self.on_change()
+
+    async def _handle_play_audio(self, msg: dict):
+        if self._pending_mix is None or self.audio_player is None:
+            return
+        start_at_server = float(msg.get("start_at_server_t") or 0.0)
+        local_start = start_at_server - self._server_offset
+        try:
+            self.audio_player.schedule_audio(
+                self._pending_mix, self._pending_sr, local_start,
+                self._pending_song, self._pending_track_names,
+                self._pending_duration,
+            )
+        except Exception as e:
+            logger.error(f"midi_band: audio schedule failed: {e}")
+            return
+        self.on_change()
+
+    def _stem_cache_dir(self) -> Path:
+        base = Path(self.cache_dir) if self.cache_dir else Path("audio_cache")
+        return base / "stems"
+
+    def _prepare_audio_blocking(self, song: str, http_port: int, stems: list):
+        # runs in a thread: download any stems we dont already have cached
+        # (keyed by sha so identical files are reused) then mix them down.
+        from .audio_player import mix_stems
+        cache = self._stem_cache_dir()
+        cache.mkdir(parents=True, exist_ok=True)
+        paths = []
+        for s in stems:
+            idx = int(s.get("index"))
+            sha = str(s.get("sha") or "")
+            ext = str(s.get("ext") or "wav").lstrip(".")
+            size = int(s.get("size") or 0)
+            fname = (sha or f"{idx}") + "." + ext
+            dest = cache / fname
+            if not dest.exists() or (size and dest.stat().st_size != size):
+                url = (
+                    f"http://{self.host}:{http_port}/api/stem"
+                    f"?song={quote(song)}&index={idx}"
+                )
+                self._download_stem(url, dest)
+            paths.append(dest)
+        return mix_stems(paths)
+
+    def _download_stem(self, url: str, dest: Path):
+        req = urllib.request.Request(url, headers={"User-Agent": "midi_band-client"})
+        tmp = dest.with_suffix(dest.suffix + ".part")
+        with urllib.request.urlopen(req, timeout=120) as resp:  # nosec B310 - http to configured band host on LAN
+            with tmp.open("wb") as f:
+                for chunk in iter(lambda: resp.read(1 << 16), b""):
+                    f.write(chunk)
+        tmp.replace(dest)
 
     async def _handle_soundcheck(self, msg: dict):
         ticks = list(msg.get("ticks") or [])

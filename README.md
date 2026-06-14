@@ -37,7 +37,7 @@ repo. Want yours featured here? Open a PR.
   - [`diary/`](#diary--long-term-first-person-diary)
   - [`mood/`](#mood--persistent-emotion--intensity)
   - [`duo_song/`](#duo_song--lan-duet-two-halves-of-one-song)
-  - [`midi_band/`](#midi_band--multi-instance-midi-band)
+  - [`midi_band/`](#midi_band--multi-instance-midi--audio-band)
   - [`pocket_tts/`](#pocket_tts--local-cpu-tts-via-kyutai-pocket-tts)
   - [`omnivoice_tts/`](#omnivoice_tts--gpu-tts-via-k2-fsa-omnivoice)
   - [`voiceid/`](#voiceid--voice-fingerprinting-and-recognition)
@@ -78,7 +78,7 @@ Read that first.
 | [`diary/`](diary/) | Memory + Tools | A background sub-agent reads recent VRChat sessions every couple hours and writes first person diary entries the AI can read back later. | `readDiary`, `searchDiary` |
 | [`mood/`](mood/) | Prompt + Tool | Two-axis mood (emotion + 1-10 intensity) that survives restarts and is injected into every system prompt. | `setMood` |
 | [`duo_song/`](duo_song/) | Tools + Audio | Two Gabriel instances on the same LAN sing duets in sync, one half per machine. | `startDuoSong` |
-| [`midi_band/`](midi_band/) | Tools + Audio | A whole band of Gabriel instances plays a MIDI together over LAN via fluidsynth. Standalone client included. | `startMidiBand` |
+| [`midi_band/`](midi_band/) | Tools + Audio | A whole band of Gabriel instances plays a song together over LAN, either MIDI tracks via fluidsynth or uploaded audio stems, in sync. Standalone client included. | `startMidiBand` |
 | [`pocket_tts/`](pocket_tts/) | TTS Provider | Local CPU TTS via Kyutai Pocket TTS. Streaming, ~6x realtime, persistent voice cloning from a clip. | `tts.external_provider: pocket_tts` |
 | [`omnivoice_tts/`](omnivoice_tts/) | TTS Provider | GPU TTS via k2-fsa OmniVoice. 600+ languages, voice cloning, voice design (`female, british accent`), sentence-batched streaming with optional CUDA graph cache. | `tts.external_provider: omnivoice_tts` |
 | [`voiceid/`](voiceid/) | Tools + Audio | Voice fingerprinting via Resemblyzer. The AI can save a voice under a name and identify whoever is currently speaking. Higher-accuracy ECAPA-TDNN variant lives on the [`voiceid-speechbrain`](https://github.com/HoppouAI/ProjectGabriel-Plugins/tree/voiceid-speechbrain) branch (not compatible with `omnivoice_tts`). | `saveVoice`, `identifyCurrentSpeaker` |
@@ -151,24 +151,26 @@ a small TCP handshake plus a fast ping/pong clock sync (typical drift under
 
 ---
 
-### [`midi_band/`](midi_band/) -- Multi-instance MIDI band
+### [`midi_band/`](midi_band/) -- Multi-instance MIDI + audio band
 
-![version](https://img.shields.io/badge/version-0.7.13-9333ea) ![api](https://img.shields.io/badge/api-v1-2ea44f) ![enabled](https://img.shields.io/badge/default-disabled-grey) ![deps](https://img.shields.io/badge/deps-mido%20%2B%20fluidsynth-blue) ![extras](https://img.shields.io/badge/extras-standalone%20client-ff66c4)
+![version](https://img.shields.io/badge/version-0.15.0-9333ea) ![api](https://img.shields.io/badge/api-v1-2ea44f) ![enabled](https://img.shields.io/badge/default-disabled-grey) ![deps](https://img.shields.io/badge/deps-fluidsynth%20%2B%20sounddevice-blue) ![extras](https://img.shields.io/badge/extras-standalone%20client-ff66c4)
 
-Turns a group of Gabriel instances on the same LAN into a live band. The
-host loads a MIDI file, assigns tracks to bandmates (drums to one, bass to
-another, lead to itself, etc), and on `startMidiBand` every bandmate plays
-their assigned tracks at the exact same moment via fluidsynth + a
-soundfont. A standalone client ships in the same folder so non-Gabriel
-users can join the band too.
+Turns a group of Gabriel instances on the same LAN into a live band. Two
+modes: **MIDI band**, where the host loads a MIDI file and every bandmate
+synths their assigned tracks via fluidsynth + a soundfont, and **audio
+band**, where you upload up to 12 audio stems (vocals, bass, drums, etc)
+of one song and bandmates play their assigned stems. Either way, on
+`startMidiBand` everyone plays at the exact same moment. A standalone
+client ships in the same folder so non-Gabriel users can join the band
+too.
 
 | | |
 |---|---|
-| **Synthesis** | `pyfluidsynth` + a `.sf2` soundfont (per machine) |
+| **Synthesis** | `pyfluidsynth` + a `.sf2` soundfont (midi mode), `sounddevice` (audio mode) |
 | **Library path** | `sfx/midi/` on the host, clients receive files on demand |
 | **Tools** | `listMidiSongs`, `loadMidiSong`, `listBandMembers`, `autoAssignBandTracks`, `assignBandTracks`, `startMidiBand`, `stopMidiBand`, `bandStatus` |
 | **Standalone client** | [`midi_band/standalone/`](midi_band/standalone/) (uv / pip) |
-| **Requires** | `mido>=1.3`, `pyfluidsynth>=1.3`, native fluidsynth library |
+| **Requires** | `mido>=1.3`, `pyfluidsynth>=1.3`, `sounddevice>=0.4`, `soundfile>=0.12`, `numpy>=1.23` |
 
 ---
 

@@ -23,9 +23,10 @@ host_address: 192.168.1.50
 # TCP port. Must match on every band member.
 port: 8784
 
-# Path to the .sf2 soundfont fluidsynth uses to synthesize notes. Required.
-# Pick anything you have, GeneralUser GS / FluidR3_GM / Arachno are good
-# free defaults.
+# Path to the .sf2 soundfont fluidsynth uses to synthesize notes. Required
+# for midi band mode (the default). Not needed if you only ever use audio
+# band mode. Pick anything you have, GeneralUser GS / FluidR3_GM / Arachno
+# are good free defaults.
 soundfont: "sfx/soundfonts/default.sf2"
 
 # Library of .mid / .midi files. Host only really uses this. Clients
@@ -44,6 +45,12 @@ synth_gain: 0.5
 # linux:   "alsa" or "pulseaudio" or "pipewire"
 # mac:     "coreaudio"
 audio_driver: ""
+
+# Output device for AUDIO BAND mode (the stem player, separate from the
+# fluidsynth driver above). Accepts a device index or a name substring,
+# eg "CABLE Input" to route this bandmate into a virtual cable. Blank =
+# system default. Needs sounddevice + soundfile + numpy installed.
+audio_device: ""
 
 # How far in the future the host commits the start time once everyone
 # has acked ready. Bigger = more sync slack on slow LANs, smaller =
