@@ -107,6 +107,8 @@ export function App() {
           ))}
         </nav>
 
+        <Conductor isHost={!!isHost} hasSong={!!currentSong} onApplied={refreshStatus} />
+
         <div className="sidebar__spacer" />
 
         <div className="sidebar__status">
@@ -144,11 +146,6 @@ export function App() {
           <Transport status={status} isHost={!!isHost} onAction={refreshStatus} />
 
           <div className={`view${tab === "board" ? "" : " view--hidden"}`}>
-            <Conductor
-              isHost={!!isHost}
-              hasSong={!!currentSong}
-              onApplied={refreshStatus}
-            />
             <AssignBoard
               tracks={tracks}
               members={members}

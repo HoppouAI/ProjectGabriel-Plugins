@@ -1113,25 +1113,27 @@ button {
 
 .conductor {
   display: flex;
-  align-items: stretch;
-  gap: 16px;
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: 11px;
+  padding: 14px;
+  border: 3px solid #000;
+  border-radius: var(--r-md);
+  background: var(--navy-800);
+  box-shadow: var(--hard-sm);
 }
 .conductor__head {
   display: flex;
   align-items: center;
-  gap: 12px;
-  flex: 1 1 210px;
-  min-width: 190px;
+  gap: 10px;
 }
 .conductor__icon {
   display: grid;
   place-items: center;
-  width: 38px;
-  height: 38px;
+  width: 34px;
+  height: 34px;
   flex: 0 0 auto;
   border-radius: var(--r-sm);
-  font-size: 17px;
+  font-size: 15px;
   color: var(--navy-900);
   background: linear-gradient(145deg, #ffd98a, var(--gold));
   box-shadow: var(--hard-sm);
@@ -1139,23 +1141,31 @@ button {
 .conductor__title {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
+  min-width: 0;
+}
+.conductor__name {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 14px;
+  letter-spacing: 0.3px;
 }
 .conductor__sub {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--muted);
 }
 .conductor__input {
-  flex: 3 1 280px;
+  width: 100%;
+  box-sizing: border-box;
   resize: vertical;
-  min-height: 52px;
-  padding: 11px 13px;
+  min-height: 66px;
+  padding: 10px 11px;
   border-radius: var(--r-sm);
   border: 2px solid var(--line);
   background: var(--navy-850);
   color: var(--text);
   font: inherit;
-  font-size: 13px;
+  font-size: 12.5px;
   line-height: 1.45;
 }
 .conductor__input:focus {
@@ -1165,19 +1175,11 @@ button {
 .conductor__input:disabled {
   opacity: 0.55;
 }
-.conductor__go {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  justify-content: center;
-  gap: 6px;
-  flex: 0 0 auto;
-}
-.conductor__go .btn {
-  white-space: nowrap;
+.conductor__btn {
+  width: 100%;
 }
 .conductor__hint {
-  font-size: 11px;
+  font-size: 10.5px;
   color: var(--faint);
   text-align: center;
 }
@@ -1364,6 +1366,10 @@ button {
     align-items: center;
     gap: 10px 14px;
   }
+  .conductor {
+    flex: 1 1 100%;
+    order: 1;
+  }
 }
 @media (max-width: 560px) {
   .transport__controls {
@@ -1372,8 +1378,5 @@ button {
   }
   .transport__vol {
     justify-content: center;
-  }
-  .conductor__go .btn {
-    width: 100%;
   }
 }

@@ -41,19 +41,19 @@ export function Conductor({ isHost, hasSong, onApplied }: Props) {
   }
 
   return (
-    <section className="conductor panel">
+    <section className="conductor">
       <div className="conductor__head">
         <span className="conductor__icon" aria-hidden>
           <FontAwesomeIcon icon={faWandMagicSparkles} />
         </span>
         <div className="conductor__title">
-          <h2 className="panel__title">AI conductor</h2>
-          <span className="conductor__sub">describe the sound, it splits the parts</span>
+          <h2 className="conductor__name">AI conductor</h2>
+          <span className="conductor__sub">describe the sound</span>
         </div>
       </div>
       <textarea
         className="conductor__input"
-        rows={2}
+        rows={3}
         placeholder={
           hasSong
             ? "e.g. stripped back and moody, keep me on piano, give the drums to one person"
@@ -66,12 +66,14 @@ export function Conductor({ isHost, hasSong, onApplied }: Props) {
           if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) conduct();
         }}
       />
-      <div className="conductor__go">
-        <button className="btn btn--accent" onClick={conduct} disabled={!ready || !prompt.trim()}>
-          {busy ? "Conducting..." : "Conduct"}
-        </button>
-        <span className="conductor__hint">{isHost ? "Ctrl+Enter to run" : "host only"}</span>
-      </div>
+      <button
+        className="btn btn--accent conductor__btn"
+        onClick={conduct}
+        disabled={!ready || !prompt.trim()}
+      >
+        {busy ? "Conducting..." : "Conduct"}
+      </button>
+      <span className="conductor__hint">{isHost ? "Ctrl+Enter to run" : "host only"}</span>
     </section>
   );
 }
