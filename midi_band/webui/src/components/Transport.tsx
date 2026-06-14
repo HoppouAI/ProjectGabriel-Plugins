@@ -4,7 +4,6 @@ import {
   faCompactDisc,
   faPlay,
   faPause,
-  faForwardStep,
   faStop,
   faCheck,
   faVolumeHigh,
@@ -72,6 +71,16 @@ export function Transport({ status, isHost, onAction }: Props) {
     }
   }
 
+  // one button covers the whole play lifecycle: start when idle, pause
+  // while sounding, and resume from where it paused (not a restart).
+  const active = playing || countIn;
+  function onToggle() {
+    if (active) return run("pause", api.pause);
+    if (paused) return run("resume", api.resume);
+    return run("play", api.play);
+  }
+  const toggleTitle = active ? "Pause" : paused ? "Resume" : "Play";
+
   function onVol(v: number) {
     setVol(v);
     lastVolEdit.current = Date.now();
@@ -120,27 +129,11 @@ export function Transport({ status, isHost, onAction }: Props) {
         <div className="transport__buttons">
           <button
             className="tbtn tbtn--play"
-            disabled={!isHost || !!busy || !song}
-            onClick={() => run("play", api.play)}
-            title="Play"
+            disabled={!isHost || !!busy || (!song && !paused)}
+            onClick={onToggle}
+            title={toggleTitle}
           >
-            <FontAwesomeIcon icon={faPlay} />
-          </button>
-          <button
-            className="tbtn"
-            disabled={!isHost || !!busy || !playing}
-            onClick={() => run("pause", api.pause)}
-            title="Pause"
-          >
-            <FontAwesomeIcon icon={faPause} />
-          </button>
-          <button
-            className="tbtn"
-            disabled={!isHost || !!busy || !paused}
-            onClick={() => run("resume", api.resume)}
-            title="Resume"
-          >
-            <FontAwesomeIcon icon={faForwardStep} />
+            <FontAwesomeIcon icon={active ? faPause : faPlay} />
           </button>
           <button
             className="tbtn tbtn--stop"
