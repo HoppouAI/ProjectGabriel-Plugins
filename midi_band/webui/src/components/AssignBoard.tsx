@@ -11,7 +11,7 @@ import {
 } from "@dnd-kit/core";
 import type { DragEndEvent, DragStartEvent } from "@dnd-kit/core";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { faEllipsis, faRightLeft } from "@fortawesome/free-solid-svg-icons";
+import { faEllipsis, faRightLeft, faCheck, faUsers } from "@fortawesome/free-solid-svg-icons";
 import type { Track, AssignmentMap, SfPreset, TrackProgram } from "../types";
 import { familyFor, presetName, buildInstrumentOptions } from "../instruments";
 import { api } from "../api";
@@ -65,22 +65,27 @@ function buildDraft(
 
 function Chip({
   track,
+  laneId,
   inPool,
   onMenu,
   overrideLabel,
+  shareCount,
 }: {
   track: Track;
+  laneId: string;
   inPool: boolean;
   onMenu: (e: React.MouseEvent, idx: number) => void;
   overrideLabel?: string | null;
+  shareCount?: number;
 }) {
   const overLabel = overrideLabel || null;
   const baseLabel = track.display_label || track.instrument || track.name || `track ${track.index}`;
   const fam = familyFor(overLabel || track.display_label || track.instrument);
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
-    id: `track:${track.index}`,
+    id: `chip:${laneId}::${track.index}`,
   });
   const label = overLabel || baseLabel;
+  const shared = (shareCount || 0) > 1;
   return (
     <div
       ref={setNodeRef}
@@ -93,6 +98,12 @@ function Chip({
         <FontAwesomeIcon icon={fam.icon} />
       </span>
       <span className="chip__label">{label}</span>
+      {shared && (
+        <span className="chip__dup" title={`playing on ${shareCount} bandmates`}>
+          <FontAwesomeIcon icon={faUsers} />
+          {shareCount}
+        </span>
+      )}
       {overLabel && (
         <span className="chip__swap" title={`overridden, playing as ${overLabel}`} aria-hidden>
           <FontAwesomeIcon icon={faRightLeft} />
@@ -120,6 +131,7 @@ function Lane({
   onMenu,
   trackPrograms,
   soundfont,
+  shareCounts,
 }: {
   id: string;
   title: string;
@@ -130,6 +142,7 @@ function Lane({
   onMenu: (e: React.MouseEvent, idx: number) => void;
   trackPrograms?: Record<string, TrackProgram | number>;
   soundfont?: SfPreset[];
+  shareCounts?: Map<number, number>;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: `lane:${id}` });
   return (
@@ -156,9 +169,11 @@ function Lane({
               <Chip
                 key={t.index}
                 track={t}
+                laneId={id}
                 inPool={inPool}
                 onMenu={onMenu}
                 overrideLabel={ovLabel}
+                shareCount={inPool ? 0 : shareCounts?.get(t.index)}
               />
             );
           })
@@ -251,13 +266,72 @@ export function AssignBoard({
     return s;
   }, [draft, members]);
 
+  // how many members each track is on, so a doubled part can flag itself
+  const shareCounts = useMemo(() => {
+    const m = new Map<number, number>();
+    for (const mem of members) for (const i of draft[mem] || []) m.set(i, (m.get(i) || 0) + 1);
+    return m;
+  }, [draft, members]);
+
   const poolTracks = playable.filter((t) => !assignedSet.has(t.index));
 
-  function moveTo(trackIndex: number, lane: string) {
+  function cloneDraft(prev: AssignmentMap): AssignmentMap {
+    const next: AssignmentMap = {};
+    for (const m of members) next[m] = [...(prev[m] || [])];
+    return next;
+  }
+
+  function addTo(trackIndex: number, member: string) {
+    if (member === POOL) return;
     setDraft((prev) => {
-      const next: AssignmentMap = {};
-      for (const m of members) next[m] = (prev[m] || []).filter((i) => i !== trackIndex);
-      if (lane !== POOL) next[lane] = [...(next[lane] || []), trackIndex];
+      const next = cloneDraft(prev);
+      if (!next[member]) next[member] = [];
+      if (!next[member].includes(trackIndex)) next[member] = [...next[member], trackIndex];
+      return next;
+    });
+    setDirty(true);
+  }
+
+  function removeFrom(trackIndex: number, member: string) {
+    setDraft((prev) => {
+      const next = cloneDraft(prev);
+      next[member] = (next[member] || []).filter((i) => i !== trackIndex);
+      return next;
+    });
+    setDirty(true);
+  }
+
+  function moveBetween(trackIndex: number, from: string, to: string) {
+    setDraft((prev) => {
+      const next = cloneDraft(prev);
+      next[from] = (next[from] || []).filter((i) => i !== trackIndex);
+      if (!next[to]) next[to] = [];
+      if (!next[to].includes(trackIndex)) next[to] = [...next[to], trackIndex];
+      return next;
+    });
+    setDirty(true);
+  }
+
+  // toggle one member on/off for a track, the whole point of multi-assign
+  function toggleMember(trackIndex: number, member: string) {
+    const on = (draft[member] || []).includes(trackIndex);
+    if (on) removeFrom(trackIndex, member);
+    else addTo(trackIndex, member);
+  }
+
+  function assignEveryone(trackIndex: number) {
+    setDraft((prev) => {
+      const next = cloneDraft(prev);
+      for (const m of members) if (!next[m].includes(trackIndex)) next[m] = [...next[m], trackIndex];
+      return next;
+    });
+    setDirty(true);
+  }
+
+  function unassignAll(trackIndex: number) {
+    setDraft((prev) => {
+      const next = cloneDraft(prev);
+      for (const m of members) next[m] = next[m].filter((i) => i !== trackIndex);
       return next;
     });
     setDirty(true);
@@ -265,17 +339,28 @@ export function AssignBoard({
 
   function onDragStart(e: DragStartEvent) {
     const id = String(e.active.id);
-    if (id.startsWith("track:")) setActiveIdx(Number(id.slice(6)));
+    if (id.startsWith("chip:")) {
+      const rest = id.slice(5);
+      const sep = rest.indexOf("::");
+      if (sep >= 0) setActiveIdx(Number(rest.slice(sep + 2)));
+    }
   }
   function onDragEnd(e: DragEndEvent) {
     setActiveIdx(null);
     const overId = e.over ? String(e.over.id) : null;
     const actId = String(e.active.id);
-    if (!overId || !actId.startsWith("track:")) return;
-    const trackIndex = Number(actId.slice(6));
-    const lane = overId.startsWith("lane:") ? overId.slice(5) : null;
-    if (lane === null) return;
-    moveTo(trackIndex, lane);
+    if (!overId || !actId.startsWith("chip:")) return;
+    const rest = actId.slice(5);
+    const sep = rest.indexOf("::");
+    if (sep < 0) return;
+    const srcLane = rest.slice(0, sep);
+    const trackIndex = Number(rest.slice(sep + 2));
+    const dstLane = overId.startsWith("lane:") ? overId.slice(5) : null;
+    if (dstLane === null || dstLane === srcLane) return;
+    // scoped to the chip you grabbed: a doubled track keeps its other copies
+    if (srcLane === POOL) addTo(trackIndex, dstLane);
+    else if (dstLane === POOL) removeFrom(trackIndex, srcLane);
+    else moveBetween(trackIndex, srcLane, dstLane);
   }
 
   async function apply() {
@@ -349,6 +434,7 @@ export function AssignBoard({
   const menuOverride = menuOv ? `${menuOv.bank}:${menuOv.program}` : "";
   const menuIsDrum = !!menuTrack?.channels?.includes(9);
   const menuOptions = buildInstrumentOptions(soundfont, menuIsDrum);
+  const menuShare = menu ? shareCounts.get(menu.idx) || 0 : 0;
 
   return (
     <section className="board panel">
@@ -384,7 +470,7 @@ export function AssignBoard({
             <Lane
               id={POOL}
               title="Unassigned"
-              subtitle={"drag a track onto a bandmate, or use its menu button"}
+              subtitle={"drag a track onto a bandmate, or use its menu to play it on several at once"}
               tracks={poolTracks}
               inPool
               onMenu={(e, idx) => setMenu({ idx, x: e.clientX, y: e.clientY })}
@@ -402,6 +488,7 @@ export function AssignBoard({
                 onMenu={(e, idx) => setMenu({ idx, x: e.clientX, y: e.clientY })}
                 trackPrograms={trackPrograms}
                 soundfont={soundfont}
+                shareCounts={shareCounts}
               />
             ))}
           </div>
@@ -472,27 +559,45 @@ export function AssignBoard({
                   : "applies on next play"}
               </span>
             </div>
-            <div className="menu__head">assign track to</div>
-            {members.map((m) => (
+            <div className="menu__head">
+              plays on {menuShare === 0 ? "nobody yet" : `${menuShare} ${menuShare === 1 ? "bandmate" : "bandmates"}`}
+            </div>
+            <div className="menu__members">
+              {members.map((m) => {
+                const on = (draft[m] || []).includes(menu.idx);
+                return (
+                  <button
+                    key={m}
+                    className={`menu__item menu__item--toggle${on ? " is-on" : ""}`}
+                    onClick={() => toggleMember(menu.idx, m)}
+                  >
+                    <span className="menu__check" aria-hidden>
+                      {on && <FontAwesomeIcon icon={faCheck} />}
+                    </span>
+                    <span className="menu__member-name">{m === hostName ? `${m} (host)` : m}</span>
+                  </button>
+                );
+              })}
+            </div>
+            {members.length > 1 && (
               <button
-                key={m}
-                className="menu__item"
-                onClick={() => {
-                  moveTo(menu.idx, m);
-                  setMenu(null);
-                }}
+                className="menu__item menu__item--everyone"
+                onClick={() => assignEveryone(menu.idx)}
               >
-                {m === hostName ? `${m} (host)` : m}
+                <span className="menu__check" aria-hidden>
+                  <FontAwesomeIcon icon={faUsers} />
+                </span>
+                <span className="menu__member-name">Play on everyone</span>
               </button>
-            ))}
+            )}
             <button
               className="menu__item menu__item--danger"
               onClick={() => {
-                moveTo(menu.idx, POOL);
+                unassignAll(menu.idx);
                 setMenu(null);
               }}
             >
-              Unassign
+              Remove from all
             </button>
           </div>
         </>

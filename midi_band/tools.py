@@ -76,7 +76,9 @@ class BandTools(BaseTool):
                     "Manually assign which tracks of the loaded song each bandmate plays. Use the "
                     "track indices returned by loadMidiSong, and the bandmate names returned by "
                     "listBandMembers. Pass your own tracks under host_tracks (you do not appear in "
-                    "client_assignments).\n"
+                    "client_assignments). You can put the same track index on more than one "
+                    "bandmate (and yourself) to thicken that part into a section, great for "
+                    "choirs, strings and big pads.\n"
                     "**Invocation Condition:** Call after loadMidiSong when you want to assign "
                     "specific instruments to specific bandmates. Skip if you already called "
                     "autoAssignBandTracks."
@@ -93,7 +95,9 @@ class BandTools(BaseTool):
                             "type": "OBJECT",
                             "description": (
                                 "Object mapping each bandmate's name to an array of track indices "
-                                "they will play, e.g. {\"gabriel_b\": [2, 3], \"gabriel_c\": [4]}."
+                                "they will play, e.g. {\"gabriel_b\": [2, 3], \"gabriel_c\": [4]}. "
+                                "The same track index can appear under several bandmates to double "
+                                "it into a fuller section."
                             ),
                         },
                     },

@@ -113,10 +113,16 @@ What you can do from it:
   assignable track instead of the whole song landing on one player.
 - Manually assign tracks to each bandmate by dragging chips between
   lanes, or hit Spread to round-robin the unassigned pool. Apply pushes
-  the layout to the band.
+  the layout to the band. You can also hand the **same** track to several
+  bandmates at once, so a single Choir Aahs or string part turns into a
+  whole section instead of one lonely voice. Open a track's `...` menu
+  and tick every bandmate who should play it (or "Play on everyone"), a
+  doubled track shows a small count badge on its chips.
 - Let the **AI conductor** do the split for you: type what you're going
   for ("stripped back and moody, keep me on piano, drums to one person")
   and the model assigns every track to a bandmate via function calling.
+  It can stack several bandmates on the same part when you ask for
+  something big, lush or choral, so the arrangement actually swells.
   Needs `google-genai` and a Gemini API key, see `conductor_api_key` /
   `conductor_model` in `config.yml.example`. If the key or package is
   missing the rest of the control room still works, the conductor just

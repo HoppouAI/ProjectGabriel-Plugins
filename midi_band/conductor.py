@@ -60,9 +60,11 @@ def _build_declarations(gtypes):
         gtypes.FunctionDeclaration(
             name="assignTracks",
             description=(
-                "Assign the song's tracks to the band. Call this exactly once with one entry "
-                "per track you want played. Leave a track out to keep it silent. Spread the "
-                "parts so the arrangement matches what the user asked for."
+                "Assign the song's tracks to the band. Call this exactly once. Each entry is "
+                "one track plus the list of members who play it. Put several members on the "
+                "same track to make that part sound bigger, like a choir or a string section, "
+                "each extra member adds another voice to it. Leave a track out entirely to keep "
+                "it silent. Spread the parts so the arrangement matches what the user asked for."
             ),
             parameters=gtypes.Schema(
                 type=gtypes.Type.OBJECT,
@@ -73,15 +75,20 @@ def _build_declarations(gtypes):
                         description="One entry per track to play.",
                         items=gtypes.Schema(
                             type=gtypes.Type.OBJECT,
-                            required=["track", "member"],
+                            required=["track", "members"],
                             properties={
                                 "track": gtypes.Schema(
                                     type=gtypes.Type.INTEGER,
                                     description="The track index to assign.",
                                 ),
-                                "member": gtypes.Schema(
-                                    type=gtypes.Type.STRING,
-                                    description="The band member name who plays this track.",
+                                "members": gtypes.Schema(
+                                    type=gtypes.Type.ARRAY,
+                                    description=(
+                                        "Names of the band members who all play this track at "
+                                        "once. Usually one, but list several to thicken the part "
+                                        "into a section (choir, strings, big pad or lead)."
+                                    ),
+                                    items=gtypes.Schema(type=gtypes.Type.STRING),
                                 ),
                             },
                         ),
@@ -128,7 +135,10 @@ async def conduct(
         "so the song sounds full. Match the user's described vibe: if they want it stripped "
         "back, leave busy tracks out; if they want it big, use everyone. Keep one player from "
         "being buried under too many parts unless it makes sense. Drums usually go to a single "
-        "player. Call assignTracks once with your full plan."
+        "player. You can put several members on the same track to thicken it into a section, "
+        "this is how you turn one voice into a real choir, string or pad section, do it when the "
+        "user wants something big, lush or choral but dont double every part or it turns to "
+        "mush. Call assignTracks once with your full plan."
     )
     user = _build_user_prompt(song, playable, members, host_name, vibe)
 
@@ -183,17 +193,28 @@ async def conduct(
             ti = int(item.get("track"))
         except (TypeError, ValueError, AttributeError):
             continue
-        if ti not in valid_idx or ti in used:
+        if ti not in valid_idx:
             continue
-        who = _match_member(item.get("member"), members)
-        if who is None:
-            unknown_members.add(str(item.get("member")))
-            continue
-        used.add(ti)
-        if who == host_name:
-            host_tracks.append(ti)
-        else:
-            client_assignments.setdefault(who, []).append(ti)
+        # accept the members array, or a legacy single "member" string
+        who_list = item.get("members")
+        if who_list is None:
+            single = item.get("member")
+            who_list = [single] if single else []
+        elif isinstance(who_list, str):
+            who_list = [who_list]
+        for raw_who in who_list:
+            who = _match_member(raw_who, members)
+            if who is None:
+                unknown_members.add(str(raw_who))
+                continue
+            used.add(ti)
+            if who == host_name:
+                if ti not in host_tracks:
+                    host_tracks.append(ti)
+            else:
+                lst = client_assignments.setdefault(who, [])
+                if ti not in lst:
+                    lst.append(ti)
 
     if not host_tracks and not client_assignments:
         return {"result": "error", "message": "the conductor's arrangement was empty"}

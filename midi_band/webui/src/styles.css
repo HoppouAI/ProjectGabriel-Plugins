@@ -1020,6 +1020,8 @@ button {
   z-index: 41;
   min-width: 224px;
   max-width: 240px;
+  max-height: min(440px, 86vh);
+  overflow-y: auto;
   padding: 6px;
   background: var(--navy-800);
   border: 2px solid var(--line-strong);
@@ -1071,6 +1073,49 @@ button {
 .menu__item--danger {
   color: var(--magenta);
 }
+.menu__members {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 196px;
+  overflow-y: auto;
+}
+.menu__item--toggle,
+.menu__item--everyone {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.menu__check {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  border: 2px solid var(--line-strong);
+  border-radius: 6px;
+  font-size: 10px;
+  color: var(--navy-900);
+  background: var(--navy-700);
+}
+.menu__item--toggle.is-on {
+  color: var(--gold-bright);
+}
+.menu__item--toggle.is-on .menu__check {
+  border-color: var(--gold);
+  background: linear-gradient(145deg, #ffd98a, var(--gold));
+}
+.menu__item--everyone .menu__check {
+  border-color: var(--line-strong);
+  background: var(--navy-700);
+  color: var(--muted);
+}
+.menu__member-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .menu__inst {
   padding: 6px 8px 8px;
   border-bottom: 1px solid var(--line);
@@ -1107,6 +1152,23 @@ button {
   color: var(--fam, var(--gold));
   opacity: 0.9;
   margin-left: 2px;
+}
+.chip__dup {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex: 0 0 auto;
+  padding: 2px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: var(--navy-900);
+  background: linear-gradient(145deg, #ffd98a, var(--gold));
+  box-shadow: var(--hard-sm);
+}
+.chip__dup svg {
+  font-size: 9px;
 }
 
 /* ---------- ai conductor ---------- */
