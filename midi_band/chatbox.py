@@ -4,6 +4,8 @@ shows their own slice so the chatbox is per-player.
 """
 from __future__ import annotations
 
+from . import protocol as P
+
 CHATBOX_MAX = 144
 DIVIDER = "\u2500" * 14
 BAR_WIDTH = 14
@@ -49,19 +51,21 @@ class BandChatbox:
             tracks = [t.get("display_label") or t.get("instrument") or t.get("name") or "?" for t in tracks]
         if not tracks:
             tracks = ["(no tracks assigned)"]
+        # midi mode synths tracks, audio mode plays uploaded stems
+        label = "audio" if s.get("mode") == P.MODE_AUDIO else "midi"
         # count-in mode: big visible "starting in N..." countdown so
         # everyone in vrchat knows the band is about to drop
         if s.get("in_count_in"):
             remaining = float(s.get("count_in_remaining") or 0.0)
             n = max(1, int(remaining + 0.999))  # ceiling, never show 0
             lines = [
-                f"midi: {song}",
+                f"{label}: {song}",
                 DIVIDER,
                 f"\u25b6 starting in {n}...",
             ]
             lines.extend(tracks)
             return "\n".join(lines)
-        prefix = "midi (paused): " if s.get("paused") else "midi: "
+        prefix = f"{label} (paused): " if s.get("paused") else f"{label}: "
         lines = [f"{prefix}{song}", DIVIDER]
         bar = _progress_bar(float(s.get("position") or 0.0),
                             float(s.get("duration") or 0.0))

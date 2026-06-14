@@ -133,6 +133,7 @@ class BandClient:
             "count_in_remaining": s.get("count_in_remaining"),
             "assignments": dict(self._all_assignments),
             "server_offset": self._server_offset,
+            "mode": self._pending_mode,
         }
 
     # ----- main loop -----

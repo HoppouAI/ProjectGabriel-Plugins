@@ -67,7 +67,7 @@ def _load_local_config(plugin_dir: Path) -> Dict[str, Any]:
 
 class MidiBandPlugin(Plugin):
     name = "midi_band"
-    version = "0.15.0"
+    version = "0.15.1"
     description = "Multiple Gabriel instances on a LAN form a band, each plays different MIDI tracks (or audio stems) of the same song in sync"
     author = "HoppouAI"
 
@@ -237,7 +237,7 @@ class MidiBandPlugin(Plugin):
 
 def _host_chatbox_status(server) -> dict:
     info = server.loaded_info()
-    ps = server.player.status()
+    ps = server.active_status()
     track_names = ps.get("tracks") or []
     if not track_names:
         # no playback yet, fall back to the assigned host tracks
@@ -257,6 +257,7 @@ def _host_chatbox_status(server) -> dict:
         "duration": ps.get("duration") or info.get("duration"),
         "in_count_in": ps.get("in_count_in"),
         "count_in_remaining": ps.get("count_in_remaining"),
+        "mode": info.get("mode"),
     }
 
 
