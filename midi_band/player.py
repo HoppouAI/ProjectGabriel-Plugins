@@ -487,6 +487,17 @@ class MidiPlayer:
                 logger.debug(f"midi_band: setting synth.gain failed: {e}")
         return g
 
+    def _soundfont_ready(self) -> bool:
+        # true once a soundfont is actually loaded, or before synth init when
+        # the configured file exists. false means this synth makes no sound,
+        # so no volume change is audible here.
+        if self._sfid is not None:
+            return True
+        try:
+            return bool(self.soundfont and self.soundfont.exists())
+        except Exception:
+            return False
+
     def is_playing(self) -> bool:
         t = self._thread
         return bool(t and t.is_alive())
@@ -517,6 +528,7 @@ class MidiPlayer:
             "count_in_lead": lead,
             "count_in_remaining": max(0.0, lead - pos) if in_count_in else 0.0,
             "in_count_in": in_count_in,
+            "has_soundfont": self._soundfont_ready(),
         }
 
     def shutdown(self):

@@ -260,7 +260,9 @@ class BandClient:
             return
         if kind == P.VOLUME:
             try:
-                self.player.set_gain(float(msg.get("gain") or 0.5))
+                g = msg.get("gain")
+                # don't let a 0 (full mute) fall through to a default
+                self.player.set_gain(0.5 if g is None else float(g))
             except Exception:
                 pass
             self.on_change()

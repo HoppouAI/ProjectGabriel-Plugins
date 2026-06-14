@@ -321,6 +321,7 @@ class _Handler(BaseHTTPRequestHandler):
                 "members": [srv.instance_name] + srv.list_clients(),
                 "track_gains": info.get("track_gains"),
                 "member_gains": info.get("member_gains"),
+                "has_soundfont": ps.get("has_soundfont"),
             })
         except Exception as e:
             out["error"] = str(e)

@@ -66,13 +66,11 @@ export function Conductor({ isHost, hasSong, onApplied }: Props) {
           if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) conduct();
         }}
       />
-      <div className="conductor__row">
-        <span className="conductor__hint">
-          {isHost ? "Ctrl+Enter to run" : "host only"}
-        </span>
+      <div className="conductor__go">
         <button className="btn btn--accent" onClick={conduct} disabled={!ready || !prompt.trim()}>
           {busy ? "Conducting..." : "Conduct"}
         </button>
+        <span className="conductor__hint">{isHost ? "Ctrl+Enter to run" : "host only"}</span>
       </div>
     </section>
   );

@@ -43,6 +43,8 @@ export interface Status {
   track_gains?: Record<string, number>;
   // member name -> synth gain
   member_gains?: Record<string, number>;
+  // false when this host has no soundfont, so its synth is silent
+  has_soundfont?: boolean;
 }
 
 export interface SyncMember {
