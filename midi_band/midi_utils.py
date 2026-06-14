@@ -151,6 +151,139 @@ def _ticks_to_seconds(target_tick: int, tpb: int, tempo_map: list) -> float:
     return seconds
 
 
+def _single_track_channels(mid) -> List[int]:
+    """Sorted channels that actually play notes in a single-track (type 0)
+    file. Shared by parse_tracks and expand_track_events so a virtual
+    track index maps to the same channel in both. Empty if no notes."""
+    if not mid.tracks:
+        return []
+    chans = set()
+    for msg in mid.tracks[0]:
+        if msg.is_meta:
+            continue
+        if msg.type in ("note_on", "note_off") and hasattr(msg, "channel"):
+            chans.add(msg.channel)
+    return sorted(chans)
+
+
+def _parse_single_track(mid, tpb, tempo_map) -> Optional[dict]:
+    """Type 0 files put every instrument in one track on separate channels.
+    Treat each channel as its own assignable track so the band can split
+    them, instead of dumping the whole song (often mislabeled "Drums"
+    because channel 9 is in the mix) onto one player."""
+    units = _single_track_channels(mid)
+    if not units:
+        return None
+    prog_per_chan: dict = {}
+    notes_per_chan = {ch: 0 for ch in units}
+    last_tick_per_chan = {ch: 0 for ch in units}
+    abs_tick = 0
+    for msg in mid.tracks[0]:
+        abs_tick += msg.time
+        if msg.is_meta:
+            continue
+        ch = getattr(msg, "channel", None)
+        if ch is None:
+            continue
+        if msg.type == "program_change":
+            # keep the first non-zero program a channel asks for, else 0
+            cur = prog_per_chan.get(ch)
+            if cur is None or (cur == 0 and msg.program != 0):
+                prog_per_chan[ch] = msg.program
+        elif msg.type in ("note_on", "note_off") and ch in notes_per_chan:
+            if msg.type == "note_on" and msg.velocity > 0:
+                notes_per_chan[ch] += 1
+            last_tick_per_chan[ch] = abs_tick
+
+    total_duration = 0.0
+    tracks_info = []
+    for pos, ch in enumerate(units):
+        last_tick = last_tick_per_chan[ch]
+        dur = _ticks_to_seconds(last_tick, tpb, tempo_map) if last_tick else 0.0
+        total_duration = max(total_duration, dur)
+        if ch == 9:
+            instrument = "Drums"
+        else:
+            prog = prog_per_chan.get(ch)
+            if prog is not None and 0 <= prog < 128:
+                instrument = GM_PROGRAMS[prog]
+            else:
+                instrument = GM_PROGRAMS[0]
+        label = instrument or f"Channel {ch + 1}"
+        tracks_info.append({
+            "index": pos,
+            "name": label,
+            "instrument": instrument,
+            "display_label": label,
+            "channels": [ch],
+            "note_count": notes_per_chan[ch],
+            "duration": round(dur, 2),
+        })
+    return {
+        "tracks": tracks_info,
+        "duration": round(total_duration, 2),
+        "ticks_per_beat": tpb,
+    }
+
+
+def _expand_single_track(mid, tpb, tempo_map, track_indices, track_programs,
+                         note_kinds, setup_kinds) -> list:
+    """Per-channel event expansion for single-track (type 0) files.
+    track_indices are virtual positions into the same channel ordering
+    _parse_single_track used."""
+    import mido
+    units = _single_track_channels(mid)
+    wanted_channels = set()
+    for i in track_indices or []:
+        try:
+            pos = int(i)
+        except Exception:
+            continue
+        if 0 <= pos < len(units):
+            wanted_channels.add(units[pos])
+
+    # instrument overrides keyed by virtual position, mapped to channel.
+    # ch9 is GM percussion, a program_change wont retune it so skip it.
+    overrides = {}
+    for k, v in (track_programs or {}).items():
+        try:
+            pos = int(k)
+            p = int(v)
+        except Exception:
+            continue
+        if 0 <= p <= 127 and 0 <= pos < len(units):
+            ch = units[pos]
+            if ch != 9:
+                overrides[ch] = p
+
+    events = []
+    abs_tick = 0
+    for msg in mid.tracks[0]:
+        abs_tick += msg.time
+        if msg.is_meta:
+            continue
+        ch = getattr(msg, "channel", None)
+        if ch is None or ch not in wanted_channels:
+            continue
+        t = msg.type
+        if t == "program_change" and ch in overrides:
+            try:
+                msg = msg.copy(program=overrides[ch])
+            except Exception:
+                pass
+        if t in note_kinds or t in setup_kinds:
+            events.append((_ticks_to_seconds(abs_tick, tpb, tempo_map), msg))
+
+    # if an overridden channel never sent a program_change, prepend one so
+    # the synth doesnt sit on the default instrument
+    seen_pc = set(m.channel for _, m in events if m.type == "program_change")
+    for ch, prog in overrides.items():
+        if ch in wanted_channels and ch not in seen_pc:
+            events.append((0.0, mido.Message("program_change", channel=ch, program=prog)))
+    events.sort(key=lambda x: x[0])
+    return events
+
+
 def parse_tracks(file_bytes: bytes) -> dict:
     """Return summary info about every track in the file:
     {tracks: [{index, name, instrument, channels, note_count, duration}],
@@ -161,6 +294,14 @@ def parse_tracks(file_bytes: bytes) -> dict:
     mid = mido.MidiFile(file=io.BytesIO(file_bytes))
     tpb = mid.ticks_per_beat
     tempo_map = _build_tempo_map(mid)
+
+    # type 0 (single track) files cram every instrument onto one track on
+    # separate channels. split them per channel so each can be assigned,
+    # otherwise the whole song lands on one player and reads as "Drums".
+    if len(mid.tracks) == 1:
+        split = _parse_single_track(mid, tpb, tempo_map)
+        if split is not None:
+            return split
 
     total_duration = 0.0
     tracks_info = []
@@ -236,7 +377,8 @@ def parse_tracks(file_bytes: bytes) -> dict:
     }
 
 
-def expand_track_events(file_bytes: bytes, track_indices: list, track_gains: dict = None) -> list:
+def expand_track_events(file_bytes: bytes, track_indices: list,
+                        track_programs: Optional[dict] = None) -> list:
     """Return [(offset_seconds, mido.Message), ...] sorted by offset, for
     only the tracks in track_indices. Meta messages are dropped, only
     sounding events make it through.
@@ -247,10 +389,10 @@ def expand_track_events(file_bytes: bytes, track_indices: list, track_gains: dic
     program_change events in a conductor track end up sounding like
     piano on every client because they only got the note tracks.
 
-    track_gains is an optional {track_index: multiplier} map that scales
-    the note velocities of that track, so a single track can be made
-    louder or quieter than the rest. Keys may be int or str, multiplier
-    around 1.0 is normal, 0.0 mutes the track."""
+    track_programs is an optional {track_index: gm_program} map that
+    forces a track to play as a different instrument than the midi
+    asked for. Wins over both the file's own program_change and our
+    name-based guess."""
     import mido
     mid = mido.MidiFile(file=io.BytesIO(file_bytes))
     tpb = mid.ticks_per_beat
@@ -258,16 +400,39 @@ def expand_track_events(file_bytes: bytes, track_indices: list, track_gains: dic
 
     note_kinds = {"note_on", "note_off", "aftertouch", "polytouch"}
     setup_kinds = {"program_change", "control_change", "pitchwheel"}
+
+    # single-track (type 0) files: track_indices are per-channel virtual
+    # positions, mirror the split parse_tracks made.
+    if len(mid.tracks) == 1:
+        return _expand_single_track(
+            mid, tpb, tempo_map, track_indices, track_programs,
+            note_kinds, setup_kinds,
+        )
+
     wanted = set(int(i) for i in track_indices if i is not None)
 
-    # normalize gain keys to int so json {str: float} and {int: float} both work
-    gains = {}
-    if track_gains:
-        for k, v in track_gains.items():
-            try:
-                gains[int(k)] = float(v)
-            except (TypeError, ValueError):
+    # explicit per-track instrument overrides. wire form has string keys
+    # so normalize to int->int and drop anything out of GM range.
+    overrides = {}
+    for k, v in (track_programs or {}).items():
+        try:
+            ti = int(k)
+            p = int(v)
+        except Exception:
+            continue
+        if 0 <= p <= 127:
+            overrides[ti] = p
+    # map each overridden track's note channels to its chosen program.
+    # ch9 is GM percussion, a program_change wont retune it so skip it.
+    channel_override = {}
+    for ti, prog in overrides.items():
+        if ti < 0 or ti >= len(mid.tracks):
+            continue
+        for msg in mid.tracks[ti]:
+            if msg.is_meta:
                 continue
+            if hasattr(msg, "channel") and msg.type in note_kinds and msg.channel != 9:
+                channel_override[msg.channel] = prog
 
     # first pass: which channels do our tracks actually play on?
     used_channels = set()
@@ -321,27 +486,21 @@ def expand_track_events(file_bytes: bytes, track_indices: list, track_gains: dic
             if msg.is_meta:
                 continue
             t = msg.type
-            # rewrite program=0 on inferred channels so the synth picks
-            # the right instrument instead of grand piano
-            if t == "program_change" and msg.program == 0 \
+            # explicit override wins, else rewrite program=0 on inferred
+            # channels so the synth picks the right instrument instead of
+            # grand piano
+            if t == "program_change" and msg.channel in channel_override:
+                try:
+                    msg = msg.copy(program=channel_override[msg.channel])
+                except Exception:
+                    pass
+            elif t == "program_change" and msg.program == 0 \
                     and msg.channel in channel_inferred:
                 try:
                     msg = msg.copy(program=channel_inferred[msg.channel])
                 except Exception:
                     pass
             if is_ours and (t in note_kinds or t in setup_kinds):
-                # per-track volume: scale the actual note hits, leave note-offs
-                # (velocity 0) alone so they still release cleanly
-                if t == "note_on" and ti in gains and getattr(msg, "velocity", 0) > 0:
-                    g = gains[ti]
-                    if g != 1.0:
-                        scaled = int(round(msg.velocity * g))
-                        scaled = 1 if scaled < 1 and g > 0 else scaled
-                        scaled = max(0, min(127, scaled))
-                        try:
-                            msg = msg.copy(velocity=scaled)
-                        except Exception:
-                            pass
                 events.append((_ticks_to_seconds(abs_tick, tpb, tempo_map), msg))
             elif (not is_ours) and t in setup_kinds and \
                     hasattr(msg, "channel") and msg.channel in used_channels:
@@ -356,6 +515,12 @@ def expand_track_events(file_bytes: bytes, track_indices: list, track_gains: dic
         if msg.type == "program_change":
             seen_program_for.add(msg.channel)
     import mido as _mido
+    # explicit overrides first so they win, then name-inferred fallbacks
+    for ch, prog in channel_override.items():
+        if ch in seen_program_for:
+            continue
+        events.append((0.0, _mido.Message("program_change", channel=ch, program=prog)))
+        seen_program_for.add(ch)
     for ch, prog in channel_inferred.items():
         if ch in seen_program_for:
             continue

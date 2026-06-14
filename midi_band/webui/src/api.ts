@@ -41,10 +41,9 @@ export const api = {
   resume: () => req("/api/resume", { method: "POST" }),
   autoAssign: () => req("/api/auto_assign", { method: "POST" }),
   setVolume: (level: number) => postJson("/api/volume", { level }),
-  setMemberVolume: (name: string, level: number) =>
-    postJson("/api/member_volume", { name, level }),
-  setTrackVolume: (index: number, level: number) =>
-    postJson("/api/track_volume", { index, level }),
+  // program is a GM number 0-127, or null to clear back to the midi's own
+  setTrackInstrument: (index: number, program: number | null) =>
+    postJson("/api/track_instrument", { index, program }),
   conduct: (prompt: string) =>
     postJson<ConductorResult>("/api/conductor", { prompt }),
   soundcheck: (duration = 8, bpm = 120) =>

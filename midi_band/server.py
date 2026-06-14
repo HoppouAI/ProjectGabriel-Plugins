@@ -82,11 +82,9 @@ class BandServer:
         self._loaded_info: Optional[dict] = None
         self._assignments: Dict[str, List[int]] = {}
         self._host_tracks: List[int] = []
-
-        # per-track volume multipliers (track index -> gain), reset on song change
-        self._track_gains: Dict[int, float] = {}
-        # per-client volume (client name -> synth gain), persists across songs
-        self._client_gains: Dict[str, float] = {}
+        # per-track instrument overrides, {track_index: gm_program 0-127}.
+        # empties out on song load, baked into events at play time.
+        self._track_programs: Dict[int, int] = {}
 
         # AI conductor hooks, both optional. key provider is called lazily so
         # it picks up the host key even if it lands after setup
@@ -291,8 +289,7 @@ class BandServer:
         if not self._loaded_info:
             return {
                 "song": None, "tracks": [], "duration": 0.0,
-                "assignments": {}, "host_tracks": [],
-                "track_gains": {}, "member_gains": self.member_gains(),
+                "assignments": {}, "host_tracks": [], "track_programs": {},
             }
         return {
             "song": self._loaded_song,
@@ -300,17 +297,8 @@ class BandServer:
             "duration": self._loaded_info["duration"],
             "assignments": dict(self._assignments),
             "host_tracks": list(self._host_tracks),
-            "track_gains": {str(k): v for k, v in self._track_gains.items()},
-            "member_gains": self.member_gains(),
+            "track_programs": {str(i): p for i, p in self._track_programs.items()},
         }
-
-    def member_gains(self) -> Dict[str, float]:
-        """Current synth gain per band member, host included. Clients we
-        haven't touched yet show the host's gain as a sane starting point."""
-        out: Dict[str, float] = {self.instance_name: round(float(self.player.gain), 3)}
-        for p in list(self._peers.values()):
-            out[p.name] = round(float(self._client_gains.get(p.name, self.player.gain)), 3)
-        return out
 
     def load_song(self, query: str) -> dict:
         path = midi_utils.find_midi(self.library_dir, query)
@@ -327,8 +315,7 @@ class BandServer:
         # assignments dont survive a song change, force re-assignment
         self._assignments = {}
         self._host_tracks = []
-        # per-track volume is tied to the song, start each new song flat
-        self._track_gains = {}
+        self._track_programs = {}
         return {
             "result": "ok",
             "song": path.name,
@@ -373,6 +360,36 @@ class BandServer:
             "assignments": self._assignments,
             "broadcast_view": self._assignments_for_broadcast(),
         }
+
+    def set_track_instrument(self, index, program) -> dict:
+        """Force a single track to play as a different GM instrument than
+        the midi asked for. program None or < 0 clears the override.
+        Takes effect on the next play."""
+        if not self._loaded_info:
+            return {"result": "error", "message": "no song loaded"}
+        try:
+            i = int(index)
+        except Exception:
+            return {"result": "error", "message": "bad track index"}
+        if i < 0 or i >= len(self._loaded_info["tracks"]):
+            return {"result": "error", "message": "track index out of range"}
+        if program is None:
+            self._track_programs.pop(i, None)
+            self.on_change()
+            return {"result": "ok", "index": i, "program": None}
+        try:
+            p = int(program)
+        except Exception:
+            return {"result": "error", "message": "program must be a number"}
+        if p < 0:
+            self._track_programs.pop(i, None)
+            self.on_change()
+            return {"result": "ok", "index": i, "program": None}
+        if p > 127:
+            return {"result": "error", "message": "program must be 0-127"}
+        self._track_programs[i] = p
+        self.on_change()
+        return {"result": "ok", "index": i, "program": p}
 
     def auto_assign(self) -> dict:
         if not self._loaded_info:
@@ -485,17 +502,12 @@ class BandServer:
             return {"result": "error", "message": "preset name required"}
         now = time.time()
         prev = self._presets.get(clean) or {}
-        # remember the mix too: per-track volumes and each member's gain
-        member_gains = {self.instance_name: round(float(self.player.gain), 3)}
-        for name in self._assignments.keys():
-            member_gains[name] = round(float(self._client_gains.get(name, self.player.gain)), 3)
         self._presets[clean] = {
             "name": clean,
             "song": self._loaded_song,
             "host_tracks": list(self._host_tracks),
             "assignments": {k: list(v) for k, v in self._assignments.items()},
-            "track_gains": {str(k): v for k, v in self._track_gains.items()},
-            "member_gains": member_gains,
+            "track_programs": {str(i): p for i, p in self._track_programs.items()},
             "created": prev.get("created", now),
             "updated": now,
         }
@@ -531,19 +543,17 @@ class BandServer:
         # missing leaves their tracks in the unassigned pool to reassign
         keep = {m: list(v) for m, v in assignments.items() if m in present}
         res = self.assign_tracks(list(pr.get("host_tracks", [])), keep)
-        # restore the saved mix: per-track volumes, then each present member's gain
-        self._track_gains = {}
-        for k, v in (pr.get("track_gains") or {}).items():
+        # restore instrument overrides for this song
+        self._track_programs = {}
+        ntracks = len(self._loaded_info["tracks"]) if self._loaded_info else 0
+        for k, v in (pr.get("track_programs") or {}).items():
             try:
-                self._track_gains[int(k)] = float(v)
-            except (TypeError, ValueError):
+                ti = int(k)
+                p = int(v)
+            except Exception:
                 continue
-        for name, g in (pr.get("member_gains") or {}).items():
-            if name == self.instance_name or name in present:
-                try:
-                    self.set_member_volume(name, float(g))
-                except Exception:
-                    pass
+            if 0 <= ti < ntracks and 0 <= p <= 127:
+                self._track_programs[ti] = p
         orphan: List[int] = []
         for m in missing:
             orphan.extend(assignments.get(m, []) or [])
@@ -617,7 +627,7 @@ class BandServer:
         for peer in peers_at_prepare:
             tracks = self._assignments.get(peer.name, [])
             track_names = [track_info[i].get("display_label") or track_info[i]["name"] for i in tracks if 0 <= i < len(track_info)]
-            peer_gains = {str(i): self._track_gains[i] for i in tracks if i in self._track_gains}
+            peer_programs = {str(i): self._track_programs[i] for i in tracks if i in self._track_programs}
             try:
                 peer.writer.write(P.encode({
                     "type": P.PREPARE,
@@ -626,7 +636,7 @@ class BandServer:
                     "file_b64": file_b64,
                     "tracks": tracks,
                     "track_names": track_names,
-                    "track_gains": peer_gains,
+                    "track_programs": peer_programs,
                     "duration": duration,
                     "count_in_beats": self.count_in_beats,
                     "count_in_bpm": self.count_in_bpm,
@@ -668,7 +678,8 @@ class BandServer:
         host_tracks = self._host_tracks
         host_track_names = [track_info[i].get("display_label") or track_info[i]["name"] for i in host_tracks if 0 <= i < len(track_info)]
         if host_tracks:
-            events = midi_utils.expand_track_events(file_bytes, host_tracks, self._track_gains)
+            host_programs = {i: self._track_programs[i] for i in host_tracks if i in self._track_programs}
+            events = midi_utils.expand_track_events(file_bytes, host_tracks, host_programs)
             events, count_in_lead = midi_utils.with_count_in(
                 events, self.count_in_beats, self.count_in_bpm
             )
@@ -776,71 +787,11 @@ class BandServer:
 
     async def set_volume(self, level: float) -> dict:
         # master fader: level is 0.0 (silent) to 2.0 (loud-ish), 0.5 is default.
-        # sets everyone, host and clients, to the same gain and remembers it
-        # as each member's per-client value so the mixer reflects it.
+        # sets everyone, host and clients, to the same synth gain.
         applied = self.player.set_gain(level)
         await self._broadcast(P.encode({"type": P.VOLUME, "gain": applied}))
-        for p in self._peers.values():
-            self._client_gains[p.name] = applied
         self.on_change()
         return {"result": "ok", "gain": applied}
-
-    def _peer_by_name(self, name: str) -> Optional[_Peer]:
-        for p in self._peers.values():
-            if p.name == name:
-                return p
-        return None
-
-    async def _send_volume_to(self, name: str, gain: float):
-        peer = self._peer_by_name(name)
-        if peer is None:
-            return
-        try:
-            peer.writer.write(P.encode({"type": P.VOLUME, "gain": gain}))
-            await peer.writer.drain()
-        except Exception as e:
-            logger.debug(f"midi_band: per-client volume to {name} failed: {e}")
-
-    def set_member_volume(self, name: str, level: float) -> dict:
-        """Set one band member's playback volume. The host changes its own
-        synth gain live, a client gets a targeted volume nudge. Both take
-        effect immediately, mid-song included."""
-        g = max(0.0, min(2.0, float(level)))
-        name = str(name or "").strip()
-        if not name:
-            return {"result": "error", "message": "member name required"}
-        if name == self.instance_name:
-            applied = self.player.set_gain(g)
-            self.on_change()
-            return {"result": "ok", "member": name, "gain": applied}
-        if self._peer_by_name(name) is None:
-            return {"result": "error", "message": f"'{name}' is not connected"}
-        self._client_gains[name] = g
-        if self._loop is not None and self._loop.is_running():
-            asyncio.run_coroutine_threadsafe(self._send_volume_to(name, g), self._loop)
-        self.on_change()
-        return {"result": "ok", "member": name, "gain": g}
-
-    def set_track_volume(self, index: int, level: float) -> dict:
-        """Set one track's volume relative to the rest of the song. Applies
-        when playback next starts, since the velocities get baked in as the
-        notes are scheduled."""
-        if not self._loaded_info:
-            return {"result": "error", "message": "no song loaded"}
-        try:
-            i = int(index)
-        except (TypeError, ValueError):
-            return {"result": "error", "message": "bad track index"}
-        if not (0 <= i < len(self._loaded_info["tracks"])):
-            return {"result": "error", "message": "track index out of range"}
-        g = max(0.0, min(2.0, float(level)))
-        if abs(g - 1.0) < 1e-3:
-            self._track_gains.pop(i, None)
-            g = 1.0
-        else:
-            self._track_gains[i] = g
-        self.on_change()
-        return {"result": "ok", "track": i, "gain": g, "applies_on_next_play": True}
 
     def get_sync_status(self) -> dict:
         """Snapshot of clock-sync health for every connected client."""

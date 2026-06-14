@@ -1023,26 +1023,6 @@ button {
   color: var(--faint);
   flex: 0 0 auto;
 }
-.menu__vol {
-  padding: 4px 8px 8px;
-  border-bottom: 1px solid var(--line);
-  margin-bottom: 4px;
-}
-.menu__vol-label {
-  display: block;
-  font-size: 10px;
-  letter-spacing: 0.6px;
-  text-transform: uppercase;
-  color: var(--faint);
-  margin-bottom: 6px;
-}
-.menu__vol-hint {
-  display: block;
-  font-size: 10px;
-  color: var(--faint);
-  margin-top: 4px;
-  font-style: italic;
-}
 .menu__head {
   font-size: 10px;
   letter-spacing: 0.6px;
@@ -1068,33 +1048,42 @@ button {
 .menu__item--danger {
   color: var(--magenta);
 }
-
-/* ---------- volume slider (shared) ---------- */
-
-.vslider {
-  display: flex;
+.menu__inst {
+  padding: 6px 8px 8px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 4px;
+}
+.menu__inst-label {
+  display: block;
+  font-size: 10px;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--faint);
+  margin-bottom: 6px;
+}
+.menu__select {
+  width: 100%;
+  background: var(--navy-700);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 7px 8px;
+  font-size: 12px;
+}
+.menu__inst-hint {
+  display: block;
+  font-size: 10px;
+  color: var(--faint);
+  margin-top: 6px;
+  font-style: italic;
+}
+.chip__swap {
+  display: inline-flex;
   align-items: center;
-  gap: 9px;
-}
-.vslider input[type="range"] {
-  flex: 1;
-  min-width: 0;
-  accent-color: var(--gold);
-}
-.vslider__val {
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  color: var(--muted);
-  min-width: 40px;
-  text-align: right;
-}
-.vslider--off {
-  opacity: 0.45;
-}
-.lane__mix {
-  margin-top: 9px;
-  padding-top: 9px;
-  border-top: 1px solid var(--line);
+  font-size: 9px;
+  color: var(--fam, var(--gold));
+  opacity: 0.9;
+  margin-left: 2px;
 }
 
 /* ---------- ai conductor ---------- */

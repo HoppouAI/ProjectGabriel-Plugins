@@ -151,10 +151,8 @@ class _Handler(BaseHTTPRequestHandler):
             return self._call_async("resume_playback")
         if path == "/api/volume":
             return self._handle_volume()
-        if path == "/api/member_volume":
-            return self._handle_member_volume()
-        if path == "/api/track_volume":
-            return self._handle_track_volume()
+        if path == "/api/track_instrument":
+            return self._handle_track_instrument()
         if path == "/api/conductor":
             return self._handle_conductor()
         if path == "/api/soundcheck":
@@ -311,6 +309,7 @@ class _Handler(BaseHTTPRequestHandler):
                 "tracks": info.get("tracks"),
                 "host_tracks": info.get("host_tracks"),
                 "assignments": info.get("assignments"),
+                "track_programs": info.get("track_programs"),
                 "duration": ps.get("duration") or info.get("duration"),
                 "position": ps.get("position"),
                 "playing": ps.get("playing"),
@@ -319,8 +318,6 @@ class _Handler(BaseHTTPRequestHandler):
                 "in_count_in": ps.get("in_count_in"),
                 "count_in_remaining": ps.get("count_in_remaining"),
                 "members": [srv.instance_name] + srv.list_clients(),
-                "track_gains": info.get("track_gains"),
-                "member_gains": info.get("member_gains"),
                 "has_soundfont": ps.get("has_soundfont"),
             })
         except Exception as e:
@@ -437,33 +434,18 @@ class _Handler(BaseHTTPRequestHandler):
             return self._json(400, {"result": "error", "message": "level must be a number"})
         return self._call_async("set_volume", level)
 
-    def _handle_member_volume(self):
-        srv = self._server_obj()
-        if srv is None:
-            return self._json(400, {"result": "error", "message": "host only"})
-        body = self._read_json()
-        name = str(body.get("name") or "").strip()
-        try:
-            level = float(body.get("level"))
-        except Exception:
-            return self._json(400, {"result": "error", "message": "level must be a number"})
-        try:
-            return self._json(200, srv.set_member_volume(name, level))
-        except Exception as e:
-            return self._json(500, {"result": "error", "message": str(e)})
-
-    def _handle_track_volume(self):
+    def _handle_track_instrument(self):
         srv = self._server_obj()
         if srv is None:
             return self._json(400, {"result": "error", "message": "host only"})
         body = self._read_json()
         try:
             index = int(body.get("index"))
-            level = float(body.get("level"))
         except Exception:
-            return self._json(400, {"result": "error", "message": "index and level required"})
+            return self._json(400, {"result": "error", "message": "index must be a number"})
+        program = body.get("program")
         try:
-            return self._json(200, srv.set_track_volume(index, level))
+            return self._json(200, srv.set_track_instrument(index, program))
         except Exception as e:
             return self._json(500, {"result": "error", "message": str(e)})
 

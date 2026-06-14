@@ -108,6 +108,9 @@ What you can do from it:
 
 - Browse the song library and drag-drop `.mid` files in to upload.
 - Load a song and see its tracks with instrument names and note counts.
+  Type 0 (single track) midis, which pack every instrument onto one
+  track, are split out per channel so each instrument is its own
+  assignable track instead of the whole song landing on one player.
 - Manually assign tracks to each bandmate by dragging chips between
   lanes, or hit Spread to round-robin the unassigned pool. Apply pushes
   the layout to the band.
@@ -118,16 +121,16 @@ What you can do from it:
   `conductor_model` in `config.yml.example`. If the key or package is
   missing the rest of the control room still works, the conductor just
   reports it can't run.
-- Mix the band: each bandmate lane has its own volume fader (live, takes
-  effect mid-song) and every track has its own volume in its `...` menu
-  (bakes into that track's note velocities on the next play). The
-  Transport fader is still the master that sets everyone at once.
+- Swap a track's instrument: open its `...` menu and pick a different
+  General MIDI instrument, or "Default (from MIDI)" to fall back to
+  whatever the song asked for. Takes effect on the next play and follows
+  the track to whichever bandmate is playing it. Overridden chips show
+  the new instrument and a small swap marker.
 - Save the current layout as a named preset and reload it later. A
   preset loads straight away when its bandmates are connected, or you
   can force load without them and the missing parts drop back into the
-  pool to reassign. Presets remember the mix (per-track and per-member
-  volumes) too, and are stored on the host under
-  `data/plugins/midi_band/presets.json`.
+  pool to reassign. Presets remember the track instrument swaps too, and
+  are stored on the host under `data/plugins/midi_band/presets.json`.
 - Drive playback: play, pause, resume, stop, soundcheck, master volume.
 - Watch per-member sync health (jitter, rtt, age) live.
 

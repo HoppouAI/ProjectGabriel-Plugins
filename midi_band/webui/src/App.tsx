@@ -12,9 +12,9 @@ import { AssignBoard } from "./components/AssignBoard";
 import { Conductor } from "./components/Conductor";
 import { useToast } from "./components/Toasts";
 
-type TabId = "mixer" | "library" | "sync";
+type TabId = "board" | "library" | "sync";
 const TABS: { id: TabId; label: string; icon: typeof faMusic }[] = [
-  { id: "mixer", label: "Mixer", icon: faSliders },
+  { id: "board", label: "Board", icon: faSliders },
   { id: "library", label: "Library", icon: faRecordVinyl },
   { id: "sync", label: "Sync", icon: faTowerBroadcast },
 ];
@@ -26,7 +26,7 @@ export function App() {
   const { data: presetsData, refresh: refreshPresets } = usePoll(api.listPresets, 2500);
   const [songs, setSongs] = useState<SongEntry[]>([]);
   const [resyncToken, setResyncToken] = useState(0);
-  const [tab, setTab] = useState<TabId>("mixer");
+  const [tab, setTab] = useState<TabId>("board");
 
   const loadSongs = useCallback(async () => {
     try {
@@ -114,7 +114,7 @@ export function App() {
 
       <Transport status={status} isHost={!!isHost} onAction={refreshStatus} />
 
-      <div className={`view${tab === "mixer" ? "" : " view--hidden"}`}>
+      <div className={`view${tab === "board" ? "" : " view--hidden"}`}>
         <Conductor
           isHost={!!isHost}
           hasSong={!!currentSong}
@@ -126,8 +126,7 @@ export function App() {
           hostName={hostName}
           serverHostTracks={status?.host_tracks || []}
           serverAssignments={status?.assignments || {}}
-          trackGains={status?.track_gains}
-          memberGains={status?.member_gains}
+          trackPrograms={status?.track_programs}
           currentSong={currentSong}
           disabled={!isHost || !currentSong}
           resyncToken={resyncToken}
