@@ -65,6 +65,7 @@ class MidiPlayer:
         # variation banks / drum kits in fancy soundfonts, not just GM.
         self._chan_bank: dict = {}
         self._preset_cache: Optional[list] = None
+        self._preset_index: Optional[set] = None
         self.on_finished: Callable[[], None] = lambda: None
 
     def _default_driver(self) -> Optional[str]:
@@ -345,17 +346,15 @@ class MidiPlayer:
                 # channels use whatever bank CC0 last picked (0 = GM).
                 bank = 128 if ch == 9 else self._chan_bank.get(ch, 0)
                 if self._sfid is not None:
+                    # resolve against what the soundfont actually ships so we
+                    # never hand fluidsynth a missing (bank, program) and spam
+                    # 'no preset with bank N' errors. drops to GM / std kit.
+                    bank, prog = self._resolve_preset(bank, msg.program)
                     ok = False
                     try:
-                        ok = fs.program_select(ch, self._sfid, bank, msg.program) != -1
+                        ok = fs.program_select(ch, self._sfid, bank, prog) != -1
                     except Exception:
                         ok = False
-                    if not ok and bank not in (0, 128):
-                        # soundfont lacks this variation bank, drop back to GM
-                        try:
-                            ok = fs.program_select(ch, self._sfid, 0, msg.program) != -1
-                        except Exception:
-                            ok = False
                     if not ok:
                         try:
                             fs.program_change(ch, msg.program)
@@ -518,6 +517,25 @@ class MidiPlayer:
             return bool(self.soundfont and self.soundfont.exists())
         except Exception:
             return False
+
+    def _avail_presets(self) -> set:
+        idx = self._preset_index
+        if idx is None:
+            idx = {(p["bank"], p["program"]) for p in self.list_presets()}
+            self._preset_index = idx
+        return idx
+
+    def _resolve_preset(self, bank: int, program: int):
+        """Pick a (bank, program) the soundfont really has. Unknown variation
+        banks drop to GM (bank 0), unknown drum programs to the standard kit."""
+        avail = self._avail_presets()
+        if not avail or (bank, program) in avail:
+            return bank, program
+        if bank == 128:
+            return (128, 0) if (128, 0) in avail else (bank, program)
+        if (0, program) in avail:
+            return 0, program
+        return bank, program
 
     def list_presets(self) -> list:
         """Presets the loaded soundfont actually ships, [{bank,program,name}].
