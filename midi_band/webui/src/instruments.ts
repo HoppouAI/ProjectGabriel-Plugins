@@ -1,25 +1,36 @@
 // Map a GM instrument / track label to an instrument family so the board
 // can color-code chips like a real DAW. Pure string matching, cheap.
 
+import type { IconDefinition } from "@fortawesome/fontawesome-svg-core";
+import {
+  faDrum,
+  faDrumSteelpan,
+  faGuitar,
+  faKeyboard,
+  faMicrophoneLines,
+  faMusic,
+  faWaveSquare,
+} from "@fortawesome/free-solid-svg-icons";
+
 export interface Family {
   key: string;
   label: string;
   color: string; // accent used for the chip
-  glyph: string; // tiny unicode marker, no icon font needed
+  icon: IconDefinition; // font awesome solid icon for the chip
 }
 
 const FAMILIES: Record<string, Family> = {
-  drums: { key: "drums", label: "Drums", color: "#ff5d8f", glyph: "\u25C9" },
-  bass: { key: "bass", label: "Bass", color: "#4c7df0", glyph: "\u2261" },
-  guitar: { key: "guitar", label: "Guitar", color: "#cba45b", glyph: "\u266B" },
-  keys: { key: "keys", label: "Keys", color: "#3fd9c0", glyph: "\u2592" },
-  strings: { key: "strings", label: "Strings", color: "#9b6be3", glyph: "\u2240" },
-  brass: { key: "brass", label: "Brass", color: "#f0954c", glyph: "\u23DA" },
-  reed: { key: "reed", label: "Reed/Wind", color: "#5fd1c4", glyph: "\u2371" },
-  voice: { key: "voice", label: "Voice", color: "#e36ba8", glyph: "\u25CC" },
-  synth: { key: "synth", label: "Synth", color: "#7c9bff", glyph: "\u2248" },
-  perc: { key: "perc", label: "Percussion", color: "#ff8a5d", glyph: "\u25C8" },
-  other: { key: "other", label: "Other", color: "#8a95b8", glyph: "\u25CB" },
+  drums: { key: "drums", label: "Drums", color: "#ff5d8f", icon: faDrum },
+  bass: { key: "bass", label: "Bass", color: "#4c7df0", icon: faGuitar },
+  guitar: { key: "guitar", label: "Guitar", color: "#cba45b", icon: faGuitar },
+  keys: { key: "keys", label: "Keys", color: "#3fd9c0", icon: faKeyboard },
+  strings: { key: "strings", label: "Strings", color: "#9b6be3", icon: faMusic },
+  brass: { key: "brass", label: "Brass", color: "#f0954c", icon: faMusic },
+  reed: { key: "reed", label: "Reed/Wind", color: "#5fd1c4", icon: faMusic },
+  voice: { key: "voice", label: "Voice", color: "#e36ba8", icon: faMicrophoneLines },
+  synth: { key: "synth", label: "Synth", color: "#7c9bff", icon: faWaveSquare },
+  perc: { key: "perc", label: "Percussion", color: "#ff8a5d", icon: faDrumSteelpan },
+  other: { key: "other", label: "Other", color: "#8a95b8", icon: faMusic },
 };
 
 const RULES: Array<[RegExp, string]> = [

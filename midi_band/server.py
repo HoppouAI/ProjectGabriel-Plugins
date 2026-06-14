@@ -8,7 +8,9 @@ way under the plugin or any other harness.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import re
 import time
 import uuid
 from pathlib import Path
@@ -16,6 +18,7 @@ from typing import Callable, Dict, List, Optional
 
 from . import midi_utils
 from . import protocol as P
+from . import conductor as _conductor
 from .player import MidiPlayer
 
 logger = logging.getLogger(__name__)
@@ -53,6 +56,9 @@ class BandServer:
         on_change: Optional[Callable[[], None]] = None,
         count_in_beats: int = 4,
         count_in_bpm: float = 120.0,
+        presets_path: Optional[Path] = None,
+        conductor_key_provider: Optional[Callable[[], str]] = None,
+        conductor_model: Optional[str] = None,
     ):
         self.bind = bind or "0.0.0.0"
         self.port = int(port)
@@ -76,6 +82,21 @@ class BandServer:
         self._loaded_info: Optional[dict] = None
         self._assignments: Dict[str, List[int]] = {}
         self._host_tracks: List[int] = []
+
+        # per-track volume multipliers (track index -> gain), reset on song change
+        self._track_gains: Dict[int, float] = {}
+        # per-client volume (client name -> synth gain), persists across songs
+        self._client_gains: Dict[str, float] = {}
+
+        # AI conductor hooks, both optional. key provider is called lazily so
+        # it picks up the host key even if it lands after setup
+        self._conductor_key_provider = conductor_key_provider
+        self._conductor_model = conductor_model or "gemini-3.1-flash-lite"
+
+        # saved assignment layouts, persisted under the plugin data dir
+        self._presets_path = presets_path
+        self._presets: Dict[str, dict] = {}
+        self._load_presets()
 
     # ----- lifecycle -----
 
@@ -271,6 +292,7 @@ class BandServer:
             return {
                 "song": None, "tracks": [], "duration": 0.0,
                 "assignments": {}, "host_tracks": [],
+                "track_gains": {}, "member_gains": self.member_gains(),
             }
         return {
             "song": self._loaded_song,
@@ -278,7 +300,17 @@ class BandServer:
             "duration": self._loaded_info["duration"],
             "assignments": dict(self._assignments),
             "host_tracks": list(self._host_tracks),
+            "track_gains": {str(k): v for k, v in self._track_gains.items()},
+            "member_gains": self.member_gains(),
         }
+
+    def member_gains(self) -> Dict[str, float]:
+        """Current synth gain per band member, host included. Clients we
+        haven't touched yet show the host's gain as a sane starting point."""
+        out: Dict[str, float] = {self.instance_name: round(float(self.player.gain), 3)}
+        for p in list(self._peers.values()):
+            out[p.name] = round(float(self._client_gains.get(p.name, self.player.gain)), 3)
+        return out
 
     def load_song(self, query: str) -> dict:
         path = midi_utils.find_midi(self.library_dir, query)
@@ -295,6 +327,8 @@ class BandServer:
         # assignments dont survive a song change, force re-assignment
         self._assignments = {}
         self._host_tracks = []
+        # per-track volume is tied to the song, start each new song flat
+        self._track_gains = {}
         return {
             "result": "ok",
             "song": path.name,
@@ -355,6 +389,181 @@ class BandServer:
         host_tracks = bucket.pop(self.instance_name, [])
         return self.assign_tracks(host_tracks, bucket)
 
+    async def ai_conduct(self, prompt: str) -> dict:
+        """Let the AI conductor assign the loaded song's tracks to the band
+        based on a vibe prompt, then apply the arrangement."""
+        if not self._loaded_info:
+            return {"result": "error", "message": "load a song before conducting"}
+        api_key = ""
+        if self._conductor_key_provider:
+            try:
+                api_key = str(self._conductor_key_provider() or "")
+            except Exception:
+                api_key = ""
+        members = [self.instance_name] + [p.name for p in self._peers.values()]
+        res = await _conductor.conduct(
+            api_key=api_key,
+            song=self._loaded_song or "",
+            tracks=self._loaded_info["tracks"],
+            members=members,
+            host_name=self.instance_name,
+            vibe=str(prompt or ""),
+            model=self._conductor_model,
+        )
+        if res.get("result") != "ok":
+            return res
+        applied = self.assign_tracks(res.get("host_tracks") or [], res.get("client_assignments") or {})
+        if applied.get("result") == "ok":
+            applied.update({
+                "reasoning": res.get("reasoning"),
+                "unassigned_tracks": res.get("unassigned_tracks"),
+                "unknown_members": res.get("unknown_members"),
+            })
+        return applied
+
+    # ----- saved assignment presets -----
+
+    def _clean_preset_name(self, name: str) -> str:
+        raw = re.sub(r"\s+", " ", str(name or "").strip())
+        raw = re.sub(r"[\x00-\x1f]", "", raw)
+        return raw[:60].strip()
+
+    def _load_presets(self):
+        self._presets = {}
+        if self._presets_path is None:
+            return
+        try:
+            if self._presets_path.exists():
+                data = json.loads(self._presets_path.read_text("utf-8")) or {}
+                pr = data.get("presets") if isinstance(data, dict) else None
+                if isinstance(pr, dict):
+                    self._presets = pr
+        except Exception as e:
+            logger.warning(f"midi_band: could not read presets: {e}")
+
+    def _save_presets(self):
+        if self._presets_path is None:
+            return
+        try:
+            self._presets_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self._presets_path.with_suffix(".tmp")
+            tmp.write_text(json.dumps({"presets": self._presets}, indent=2), "utf-8")
+            tmp.replace(self._presets_path)
+        except Exception as e:
+            logger.warning(f"midi_band: could not save presets: {e}")
+
+    def list_presets(self) -> dict:
+        present = set(self.list_clients())
+        loaded = self._loaded_song
+        out = []
+        for name, pr in self._presets.items():
+            assignments = pr.get("assignments", {}) or {}
+            mates = list(assignments.keys())
+            missing = [m for m in mates if m not in present]
+            song = pr.get("song")
+            available = bool(song) and ((self.library_dir / song).exists() or song == loaded)
+            count = len(pr.get("host_tracks", []) or []) + sum(len(v or []) for v in assignments.values())
+            out.append({
+                "name": name,
+                "song": song,
+                "members": mates,
+                "track_count": count,
+                "missing": missing,
+                "ready": not missing,
+                "song_loaded": song == loaded,
+                "song_available": available,
+                "updated": pr.get("updated"),
+            })
+        out.sort(key=lambda p: p.get("updated") or 0, reverse=True)
+        return {"result": "ok", "presets": out, "members": sorted(present)}
+
+    def save_preset(self, name: str) -> dict:
+        if not self._loaded_info or not self._loaded_song:
+            return {"result": "error", "message": "load a song before saving a preset"}
+        clean = self._clean_preset_name(name)
+        if not clean:
+            return {"result": "error", "message": "preset name required"}
+        now = time.time()
+        prev = self._presets.get(clean) or {}
+        # remember the mix too: per-track volumes and each member's gain
+        member_gains = {self.instance_name: round(float(self.player.gain), 3)}
+        for name in self._assignments.keys():
+            member_gains[name] = round(float(self._client_gains.get(name, self.player.gain)), 3)
+        self._presets[clean] = {
+            "name": clean,
+            "song": self._loaded_song,
+            "host_tracks": list(self._host_tracks),
+            "assignments": {k: list(v) for k, v in self._assignments.items()},
+            "track_gains": {str(k): v for k, v in self._track_gains.items()},
+            "member_gains": member_gains,
+            "created": prev.get("created", now),
+            "updated": now,
+        }
+        self._save_presets()
+        return {"result": "ok", "preset": clean}
+
+    def load_preset(self, name: str, force: bool = False) -> dict:
+        clean = self._clean_preset_name(name)
+        pr = self._presets.get(clean) or self._presets.get(str(name or "").strip())
+        if pr is None:
+            return {"result": "error", "message": f"no preset named '{name}'"}
+        song = pr.get("song")
+        if not song:
+            return {"result": "error", "message": "this preset has no song"}
+        present = set(self.list_clients())
+        assignments = pr.get("assignments", {}) or {}
+        missing = [m for m in assignments.keys() if m not in present]
+        if missing and not force:
+            return {
+                "result": "blocked",
+                "code": "missing_members",
+                "missing": missing,
+                "message": "waiting on " + ", ".join(missing),
+            }
+        # make sure the preset's song is the loaded one so indices line up
+        if song != self._loaded_song:
+            if not (self.library_dir / song).exists():
+                return {"result": "error", "message": f"'{song}' is not in the library"}
+            res = self.load_song(song)
+            if res.get("result") != "ok":
+                return res
+        # only hand out parts to bandmates who are actually here. anyone
+        # missing leaves their tracks in the unassigned pool to reassign
+        keep = {m: list(v) for m, v in assignments.items() if m in present}
+        res = self.assign_tracks(list(pr.get("host_tracks", [])), keep)
+        # restore the saved mix: per-track volumes, then each present member's gain
+        self._track_gains = {}
+        for k, v in (pr.get("track_gains") or {}).items():
+            try:
+                self._track_gains[int(k)] = float(v)
+            except (TypeError, ValueError):
+                continue
+        for name, g in (pr.get("member_gains") or {}).items():
+            if name == self.instance_name or name in present:
+                try:
+                    self.set_member_volume(name, float(g))
+                except Exception:
+                    pass
+        orphan: List[int] = []
+        for m in missing:
+            orphan.extend(assignments.get(m, []) or [])
+        res.update({
+            "preset": clean,
+            "song": self._loaded_song,
+            "missing": missing,
+            "orphan_tracks": orphan,
+            "forced": bool(missing),
+        })
+        return res
+
+    def delete_preset(self, name: str) -> dict:
+        for key in (self._clean_preset_name(name), str(name or "").strip()):
+            if key in self._presets:
+                self._presets.pop(key, None)
+                self._save_presets()
+                return {"result": "ok", "deleted": key}
+        return {"result": "error", "message": f"no preset named '{name}'"}
+
     def _assignments_for_broadcast(self) -> dict:
         if not self._loaded_info:
             return {}
@@ -408,6 +617,7 @@ class BandServer:
         for peer in peers_at_prepare:
             tracks = self._assignments.get(peer.name, [])
             track_names = [track_info[i].get("display_label") or track_info[i]["name"] for i in tracks if 0 <= i < len(track_info)]
+            peer_gains = {str(i): self._track_gains[i] for i in tracks if i in self._track_gains}
             try:
                 peer.writer.write(P.encode({
                     "type": P.PREPARE,
@@ -416,6 +626,7 @@ class BandServer:
                     "file_b64": file_b64,
                     "tracks": tracks,
                     "track_names": track_names,
+                    "track_gains": peer_gains,
                     "duration": duration,
                     "count_in_beats": self.count_in_beats,
                     "count_in_bpm": self.count_in_bpm,
@@ -457,7 +668,7 @@ class BandServer:
         host_tracks = self._host_tracks
         host_track_names = [track_info[i].get("display_label") or track_info[i]["name"] for i in host_tracks if 0 <= i < len(track_info)]
         if host_tracks:
-            events = midi_utils.expand_track_events(file_bytes, host_tracks)
+            events = midi_utils.expand_track_events(file_bytes, host_tracks, self._track_gains)
             events, count_in_lead = midi_utils.with_count_in(
                 events, self.count_in_beats, self.count_in_bpm
             )
@@ -564,11 +775,72 @@ class BandServer:
         return {"result": "ok", "starts_in_seconds": round(self.lead, 2)}
 
     async def set_volume(self, level: float) -> dict:
-        # level is 0.0 (silent) to 2.0 (loud-ish), 0.5 is the default
+        # master fader: level is 0.0 (silent) to 2.0 (loud-ish), 0.5 is default.
+        # sets everyone, host and clients, to the same gain and remembers it
+        # as each member's per-client value so the mixer reflects it.
         applied = self.player.set_gain(level)
         await self._broadcast(P.encode({"type": P.VOLUME, "gain": applied}))
+        for p in self._peers.values():
+            self._client_gains[p.name] = applied
         self.on_change()
         return {"result": "ok", "gain": applied}
+
+    def _peer_by_name(self, name: str) -> Optional[_Peer]:
+        for p in self._peers.values():
+            if p.name == name:
+                return p
+        return None
+
+    async def _send_volume_to(self, name: str, gain: float):
+        peer = self._peer_by_name(name)
+        if peer is None:
+            return
+        try:
+            peer.writer.write(P.encode({"type": P.VOLUME, "gain": gain}))
+            await peer.writer.drain()
+        except Exception as e:
+            logger.debug(f"midi_band: per-client volume to {name} failed: {e}")
+
+    def set_member_volume(self, name: str, level: float) -> dict:
+        """Set one band member's playback volume. The host changes its own
+        synth gain live, a client gets a targeted volume nudge. Both take
+        effect immediately, mid-song included."""
+        g = max(0.0, min(2.0, float(level)))
+        name = str(name or "").strip()
+        if not name:
+            return {"result": "error", "message": "member name required"}
+        if name == self.instance_name:
+            applied = self.player.set_gain(g)
+            self.on_change()
+            return {"result": "ok", "member": name, "gain": applied}
+        if self._peer_by_name(name) is None:
+            return {"result": "error", "message": f"'{name}' is not connected"}
+        self._client_gains[name] = g
+        if self._loop is not None and self._loop.is_running():
+            asyncio.run_coroutine_threadsafe(self._send_volume_to(name, g), self._loop)
+        self.on_change()
+        return {"result": "ok", "member": name, "gain": g}
+
+    def set_track_volume(self, index: int, level: float) -> dict:
+        """Set one track's volume relative to the rest of the song. Applies
+        when playback next starts, since the velocities get baked in as the
+        notes are scheduled."""
+        if not self._loaded_info:
+            return {"result": "error", "message": "no song loaded"}
+        try:
+            i = int(index)
+        except (TypeError, ValueError):
+            return {"result": "error", "message": "bad track index"}
+        if not (0 <= i < len(self._loaded_info["tracks"])):
+            return {"result": "error", "message": "track index out of range"}
+        g = max(0.0, min(2.0, float(level)))
+        if abs(g - 1.0) < 1e-3:
+            self._track_gains.pop(i, None)
+            g = 1.0
+        else:
+            self._track_gains[i] = g
+        self.on_change()
+        return {"result": "ok", "track": i, "gain": g, "applies_on_next_play": True}
 
     def get_sync_status(self) -> dict:
         """Snapshot of clock-sync health for every connected client."""

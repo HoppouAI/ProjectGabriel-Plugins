@@ -236,7 +236,7 @@ def parse_tracks(file_bytes: bytes) -> dict:
     }
 
 
-def expand_track_events(file_bytes: bytes, track_indices: list) -> list:
+def expand_track_events(file_bytes: bytes, track_indices: list, track_gains: dict = None) -> list:
     """Return [(offset_seconds, mido.Message), ...] sorted by offset, for
     only the tracks in track_indices. Meta messages are dropped, only
     sounding events make it through.
@@ -245,7 +245,12 @@ def expand_track_events(file_bytes: bytes, track_indices: list) -> list:
     that live in OTHER tracks but target a channel our chosen tracks
     use also get pulled in. Without this, midis that put all the
     program_change events in a conductor track end up sounding like
-    piano on every client because they only got the note tracks."""
+    piano on every client because they only got the note tracks.
+
+    track_gains is an optional {track_index: multiplier} map that scales
+    the note velocities of that track, so a single track can be made
+    louder or quieter than the rest. Keys may be int or str, multiplier
+    around 1.0 is normal, 0.0 mutes the track."""
     import mido
     mid = mido.MidiFile(file=io.BytesIO(file_bytes))
     tpb = mid.ticks_per_beat
@@ -254,6 +259,15 @@ def expand_track_events(file_bytes: bytes, track_indices: list) -> list:
     note_kinds = {"note_on", "note_off", "aftertouch", "polytouch"}
     setup_kinds = {"program_change", "control_change", "pitchwheel"}
     wanted = set(int(i) for i in track_indices if i is not None)
+
+    # normalize gain keys to int so json {str: float} and {int: float} both work
+    gains = {}
+    if track_gains:
+        for k, v in track_gains.items():
+            try:
+                gains[int(k)] = float(v)
+            except (TypeError, ValueError):
+                continue
 
     # first pass: which channels do our tracks actually play on?
     used_channels = set()
@@ -316,6 +330,18 @@ def expand_track_events(file_bytes: bytes, track_indices: list) -> list:
                 except Exception:
                     pass
             if is_ours and (t in note_kinds or t in setup_kinds):
+                # per-track volume: scale the actual note hits, leave note-offs
+                # (velocity 0) alone so they still release cleanly
+                if t == "note_on" and ti in gains and getattr(msg, "velocity", 0) > 0:
+                    g = gains[ti]
+                    if g != 1.0:
+                        scaled = int(round(msg.velocity * g))
+                        scaled = 1 if scaled < 1 and g > 0 else scaled
+                        scaled = max(0, min(127, scaled))
+                        try:
+                            msg = msg.copy(velocity=scaled)
+                        except Exception:
+                            pass
                 events.append((_ticks_to_seconds(abs_tick, tpb, tempo_map), msg))
             elif (not is_ours) and t in setup_kinds and \
                     hasattr(msg, "channel") and msg.channel in used_channels:

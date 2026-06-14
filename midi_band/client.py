@@ -355,6 +355,7 @@ class BandClient:
         self._pending_tracks = tracks
         self._pending_song = song
         self._pending_track_names = track_names
+        self._pending_track_gains = dict(msg.get("track_gains") or {})
         self._pending_duration = duration
         self._pending_count_in_beats = int(msg.get("count_in_beats") or 0)
         self._pending_count_in_bpm = float(msg.get("count_in_bpm") or 120.0)
@@ -379,7 +380,10 @@ class BandClient:
         local_start = start_at_server - self._server_offset
         try:
             file_bytes = base64.b64decode(self._pending_file_b64 or "")
-            events = midi_utils.expand_track_events(file_bytes, self._pending_tracks)
+            events = midi_utils.expand_track_events(
+                file_bytes, self._pending_tracks,
+                getattr(self, "_pending_track_gains", None),
+            )
             events, count_in_lead = midi_utils.with_count_in(
                 events,
                 self._pending_count_in_beats,

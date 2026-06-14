@@ -68,3 +68,15 @@ webui_port: 8783
 # GitHub releases and extract it under data/plugins/midi_band/fluidsynth/.
 # Set to false to disable that and require a system install.
 auto_install_fluidsynth: true
+
+# AI conductor. From the web control room you can type a vibe ("stripped
+# back and moody, keep me on piano") and the model assigns every track to
+# a bandmate for you. Host only. Needs google-genai installed and a
+# Gemini API key.
+# Key lookup order: conductor_api_key below, then the host's main Gemini
+# key, then the GEMINI_API_KEY environment variable. Leave blank to use
+# whichever of those is already set.
+conductor_api_key: ""
+# Gemini model the conductor uses.
+conductor_model: "gemini-3.1-flash-lite"
+

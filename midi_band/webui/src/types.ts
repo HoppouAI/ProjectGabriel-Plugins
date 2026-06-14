@@ -39,6 +39,10 @@ export interface Status {
   in_count_in?: boolean;
   count_in_remaining?: number;
   members?: string[];
+  // track index (as string) -> volume multiplier, only present for non-default tracks
+  track_gains?: Record<string, number>;
+  // member name -> synth gain
+  member_gains?: Record<string, number>;
 }
 
 export interface SyncMember {
@@ -65,3 +69,41 @@ export interface SyncStatus {
 // member name -> list of track indices. The host is always the first
 // entry in Status.members and maps to host_tracks on the wire.
 export type AssignmentMap = Record<string, number[]>;
+
+export interface PresetSummary {
+  name: string;
+  song: string | null;
+  members: string[];
+  track_count: number;
+  missing: string[];
+  ready: boolean;
+  song_loaded: boolean;
+  song_available: boolean;
+  updated?: number;
+}
+
+export interface PresetsResponse {
+  result: string;
+  presets: PresetSummary[];
+  members?: string[];
+}
+
+export interface PresetLoadResult {
+  result: string; // "ok" | "blocked" | "error"
+  code?: string;
+  preset?: string;
+  song?: string;
+  missing?: string[];
+  orphan_tracks?: number[];
+  forced?: boolean;
+}
+
+export interface ConductorResult {
+  result: string; // "ok" | "error"
+  message?: string;
+  host_tracks?: number[];
+  assignments?: Record<string, number[]>;
+  reasoning?: string;
+  unassigned_tracks?: number[];
+  unknown_members?: string[];
+}

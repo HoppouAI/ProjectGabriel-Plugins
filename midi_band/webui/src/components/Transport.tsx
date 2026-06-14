@@ -1,4 +1,14 @@
 import { useEffect, useRef, useState } from "react";
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import {
+  faCompactDisc,
+  faPlay,
+  faPause,
+  faForwardStep,
+  faStop,
+  faCheck,
+  faVolumeHigh,
+} from "@fortawesome/free-solid-svg-icons";
 import type { Status } from "../types";
 import { api } from "../api";
 import { fmtTime } from "../hooks";
@@ -81,7 +91,7 @@ export function Transport({ status, isHost, onAction }: Props) {
     <section className="transport panel">
       <div className="transport__now">
         <div className="transport__disc" style={{ ["--fam" as any]: fam.color }} data-spin={playing}>
-          <span>{"\u266B"}</span>
+          <FontAwesomeIcon icon={faCompactDisc} />
         </div>
         <div className="transport__meta">
           <div className="transport__song" title={song || ""}>
@@ -114,7 +124,7 @@ export function Transport({ status, isHost, onAction }: Props) {
             onClick={() => run("play", api.play)}
             title="Play"
           >
-            {"\u25B6"}
+            <FontAwesomeIcon icon={faPlay} />
           </button>
           <button
             className="tbtn"
@@ -122,7 +132,7 @@ export function Transport({ status, isHost, onAction }: Props) {
             onClick={() => run("pause", api.pause)}
             title="Pause"
           >
-            {"\u23F8"}
+            <FontAwesomeIcon icon={faPause} />
           </button>
           <button
             className="tbtn"
@@ -130,7 +140,7 @@ export function Transport({ status, isHost, onAction }: Props) {
             onClick={() => run("resume", api.resume)}
             title="Resume"
           >
-            {"\u23ED"}
+            <FontAwesomeIcon icon={faForwardStep} />
           </button>
           <button
             className="tbtn tbtn--stop"
@@ -138,7 +148,7 @@ export function Transport({ status, isHost, onAction }: Props) {
             onClick={() => run("stop", api.stop)}
             title="Stop"
           >
-            {"\u25A0"}
+            <FontAwesomeIcon icon={faStop} />
           </button>
           <button
             className="tbtn tbtn--check"
@@ -146,13 +156,13 @@ export function Transport({ status, isHost, onAction }: Props) {
             onClick={() => run("soundcheck", () => api.soundcheck(8, 120))}
             title="Soundcheck (sync + warmup)"
           >
-            {"\u2713 check"}
+            <FontAwesomeIcon icon={faCheck} /> check
           </button>
         </div>
 
         <div className="transport__vol">
           <span className="transport__vol-icon" aria-hidden>
-            {"\u{1F50A}"}
+            <FontAwesomeIcon icon={faVolumeHigh} />
           </span>
           <input
             type="range"

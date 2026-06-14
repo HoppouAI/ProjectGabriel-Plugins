@@ -1,5 +1,5 @@
 name: midi_band
-version: 0.8.0
+version: 0.10.0
 api_version: 1
 author: HoppouAI
 description: Multiple Gabriel instances on the same LAN form a band, each plays different MIDI tracks of the same song in sync via a soundfont. Includes a standalone client for non-Gabriel players.
@@ -7,3 +7,4 @@ enabled: false
 requirements:
   - mido>=1.3
   - pyfluidsynth>=1.3
+  - google-genai>=0.3

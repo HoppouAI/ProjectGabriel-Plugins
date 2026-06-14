@@ -119,6 +119,8 @@ class _Handler(BaseHTTPRequestHandler):
             return self._handle_status()
         if path == "/api/sync":
             return self._handle_sync()
+        if path == "/api/presets":
+            return self._handle_presets_list()
         if path.startswith("/api/"):
             return self.send_error(404)
         return self._serve_static(path)
@@ -133,6 +135,12 @@ class _Handler(BaseHTTPRequestHandler):
             return self._call_async("auto_assign_sync")
         if path == "/api/assign":
             return self._handle_assign()
+        if path == "/api/presets/save":
+            return self._handle_preset_save()
+        if path == "/api/presets/load":
+            return self._handle_preset_load()
+        if path == "/api/presets/delete":
+            return self._handle_preset_delete()
         if path == "/api/play":
             return self._call_async("start_playback")
         if path == "/api/stop":
@@ -143,6 +151,12 @@ class _Handler(BaseHTTPRequestHandler):
             return self._call_async("resume_playback")
         if path == "/api/volume":
             return self._handle_volume()
+        if path == "/api/member_volume":
+            return self._handle_member_volume()
+        if path == "/api/track_volume":
+            return self._handle_track_volume()
+        if path == "/api/conductor":
+            return self._handle_conductor()
         if path == "/api/soundcheck":
             return self._handle_soundcheck()
         self.send_error(404)
@@ -305,6 +319,8 @@ class _Handler(BaseHTTPRequestHandler):
                 "in_count_in": ps.get("in_count_in"),
                 "count_in_remaining": ps.get("count_in_remaining"),
                 "members": [srv.instance_name] + srv.list_clients(),
+                "track_gains": info.get("track_gains"),
+                "member_gains": info.get("member_gains"),
             })
         except Exception as e:
             out["error"] = str(e)
@@ -362,6 +378,53 @@ class _Handler(BaseHTTPRequestHandler):
             return self._json(500, {"result": "error", "message": str(e)})
         return self._json(200, res)
 
+    def _handle_presets_list(self):
+        srv = self._server_obj()
+        if srv is None:
+            return self._json(200, {"result": "ok", "role": "client", "presets": []})
+        try:
+            return self._json(200, srv.list_presets())
+        except Exception as e:
+            return self._json(500, {"result": "error", "message": str(e)})
+
+    def _handle_preset_save(self):
+        srv = self._server_obj()
+        if srv is None:
+            return self._json(400, {"result": "error", "message": "host only"})
+        name = str(self._read_json().get("name") or "").strip()
+        if not name:
+            return self._json(400, {"result": "error", "message": "name required"})
+        try:
+            return self._json(200, srv.save_preset(name))
+        except Exception as e:
+            return self._json(500, {"result": "error", "message": str(e)})
+
+    def _handle_preset_load(self):
+        srv = self._server_obj()
+        if srv is None:
+            return self._json(400, {"result": "error", "message": "host only"})
+        body = self._read_json()
+        name = str(body.get("name") or "").strip()
+        force = bool(body.get("force"))
+        if not name:
+            return self._json(400, {"result": "error", "message": "name required"})
+        try:
+            return self._json(200, srv.load_preset(name, force))
+        except Exception as e:
+            return self._json(500, {"result": "error", "message": str(e)})
+
+    def _handle_preset_delete(self):
+        srv = self._server_obj()
+        if srv is None:
+            return self._json(400, {"result": "error", "message": "host only"})
+        name = str(self._read_json().get("name") or "").strip()
+        if not name:
+            return self._json(400, {"result": "error", "message": "name required"})
+        try:
+            return self._json(200, srv.delete_preset(name))
+        except Exception as e:
+            return self._json(500, {"result": "error", "message": str(e)})
+
     def _handle_volume(self):
         srv = self._server_obj()
         if srv is None:
@@ -372,6 +435,53 @@ class _Handler(BaseHTTPRequestHandler):
         except Exception:
             return self._json(400, {"result": "error", "message": "level must be a number"})
         return self._call_async("set_volume", level)
+
+    def _handle_member_volume(self):
+        srv = self._server_obj()
+        if srv is None:
+            return self._json(400, {"result": "error", "message": "host only"})
+        body = self._read_json()
+        name = str(body.get("name") or "").strip()
+        try:
+            level = float(body.get("level"))
+        except Exception:
+            return self._json(400, {"result": "error", "message": "level must be a number"})
+        try:
+            return self._json(200, srv.set_member_volume(name, level))
+        except Exception as e:
+            return self._json(500, {"result": "error", "message": str(e)})
+
+    def _handle_track_volume(self):
+        srv = self._server_obj()
+        if srv is None:
+            return self._json(400, {"result": "error", "message": "host only"})
+        body = self._read_json()
+        try:
+            index = int(body.get("index"))
+            level = float(body.get("level"))
+        except Exception:
+            return self._json(400, {"result": "error", "message": "index and level required"})
+        try:
+            return self._json(200, srv.set_track_volume(index, level))
+        except Exception as e:
+            return self._json(500, {"result": "error", "message": str(e)})
+
+    def _handle_conductor(self):
+        srv = self._server_obj()
+        if srv is None:
+            return self._json(400, {"result": "error", "message": "host only"})
+        body = self._read_json()
+        prompt = str(body.get("prompt") or "").strip()
+        loop = getattr(srv, "_loop", None)
+        if loop is None or not loop.is_running():
+            return self._json(503, {"result": "error", "message": "band server not running"})
+        # the model call can take a while, give it a roomy timeout
+        try:
+            fut = asyncio.run_coroutine_threadsafe(srv.ai_conduct(prompt), loop)
+            res = fut.result(timeout=60.0)
+        except Exception as e:
+            return self._json(500, {"result": "error", "message": str(e)})
+        return self._json(200, res or {"result": "ok"})
 
     def _handle_soundcheck(self):
         srv = self._server_obj()

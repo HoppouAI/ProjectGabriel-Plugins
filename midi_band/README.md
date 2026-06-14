@@ -111,6 +111,23 @@ What you can do from it:
 - Manually assign tracks to each bandmate by dragging chips between
   lanes, or hit Spread to round-robin the unassigned pool. Apply pushes
   the layout to the band.
+- Let the **AI conductor** do the split for you: type what you're going
+  for ("stripped back and moody, keep me on piano, drums to one person")
+  and the model assigns every track to a bandmate via function calling.
+  Needs `google-genai` and a Gemini API key, see `conductor_api_key` /
+  `conductor_model` in `config.yml.example`. If the key or package is
+  missing the rest of the control room still works, the conductor just
+  reports it can't run.
+- Mix the band: each bandmate lane has its own volume fader (live, takes
+  effect mid-song) and every track has its own volume in its `...` menu
+  (bakes into that track's note velocities on the next play). The
+  Transport fader is still the master that sets everyone at once.
+- Save the current layout as a named preset and reload it later. A
+  preset loads straight away when its bandmates are connected, or you
+  can force load without them and the missing parts drop back into the
+  pool to reassign. Presets remember the mix (per-track and per-member
+  volumes) too, and are stored on the host under
+  `data/plugins/midi_band/presets.json`.
 - Drive playback: play, pause, resume, stop, soundcheck, master volume.
 - Watch per-member sync health (jitter, rtt, age) live.
 

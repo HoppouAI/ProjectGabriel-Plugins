@@ -1,4 +1,6 @@
 import { useRef, useState } from "react";
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { faUpload, faRotate } from "@fortawesome/free-solid-svg-icons";
 import { api } from "../api";
 import { fmtSize } from "../hooks";
 import { useToast } from "./Toasts";
@@ -53,7 +55,7 @@ export function Uploader({ onUploaded }: { onUploaded: () => void }) {
         }}
       />
       <span className="drop__icon" aria-hidden>
-        {busy ? "\u21BB" : "\u2B07"}
+        <FontAwesomeIcon icon={busy ? faRotate : faUpload} spin={busy} />
       </span>
       <span className="drop__text">
         {busy ? "uploading..." : "drop .mid files here"}

@@ -10,6 +10,7 @@ Config sources in priority order (later wins):
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from typing import Any, Dict
 
@@ -65,7 +66,7 @@ def _load_local_config(plugin_dir: Path) -> Dict[str, Any]:
 
 class MidiBandPlugin(Plugin):
     name = "midi_band"
-    version = "0.1.0"
+    version = "0.10.0"
     description = "Multiple Gabriel instances on a LAN form a band, each plays different MIDI tracks of the same song in sync via a soundfont"
     author = "HoppouAI"
 
@@ -92,6 +93,18 @@ class MidiBandPlugin(Plugin):
 
         sf = cfg("soundfont")
         soundfont = Path(str(sf)).expanduser() if sf else None
+
+        # AI conductor: model + a lazy key lookup that falls back to the host's
+        # main Gemini key, then the env var, so most installs need zero config
+        conductor_model = str(cfg("conductor_model", "gemini-3.1-flash-lite") or "gemini-3.1-flash-lite")
+
+        def conductor_key() -> str:
+            k = cfg("conductor_api_key")
+            if not k:
+                k = getattr(getattr(ctx, "config", None), "api_key", "") or ""
+            if not k:
+                k = os.environ.get("GEMINI_API_KEY", "")
+            return str(k or "")
 
         lib = cfg("library_dir")
         if lib:
@@ -124,6 +137,9 @@ class MidiBandPlugin(Plugin):
                 schedule_lead_seconds=lead,
                 count_in_beats=count_in_beats,
                 count_in_bpm=count_in_bpm,
+                presets_path=ctx.data_dir() / "presets.json",
+                conductor_key_provider=conductor_key,
+                conductor_model=conductor_model,
             )
             BandTools._server = server
             BandTools._client = None

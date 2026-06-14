@@ -10,10 +10,13 @@ import {
   closestCenter,
 } from "@dnd-kit/core";
 import type { DragEndEvent, DragStartEvent } from "@dnd-kit/core";
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { faEllipsis } from "@fortawesome/free-solid-svg-icons";
 import type { Track, AssignmentMap } from "../types";
 import { familyFor } from "../instruments";
 import { api } from "../api";
 import { useToast } from "./Toasts";
+import { VolumeSlider } from "./VolumeSlider";
 
 const POOL = "__pool__";
 
@@ -23,7 +26,11 @@ interface Props {
   hostName: string;
   serverHostTracks: number[];
   serverAssignments: AssignmentMap;
+  trackGains?: Record<string, number>;
+  memberGains?: Record<string, number>;
+  currentSong?: string | null;
   disabled: boolean;
+  resyncToken?: number;
   onApplied: () => void;
 }
 
@@ -67,17 +74,16 @@ function Chip({
       {...attributes}
     >
       <span className="chip__glyph" aria-hidden>
-        {fam.glyph}
+        <FontAwesomeIcon icon={fam.icon} />
       </span>
       <span className="chip__label">{label}</span>
-      <span className="chip__notes">{track.note_count}</span>
       <button
         className="chip__menu"
-        title="assign to..."
+        title="volume + assign"
         onPointerDown={(e) => e.stopPropagation()}
         onClick={(e) => onMenu(e, track.index)}
       >
-        {"\u22EF"}
+        <FontAwesomeIcon icon={faEllipsis} />
       </button>
     </div>
   );
@@ -91,6 +97,7 @@ function Lane({
   tracks,
   inPool,
   onMenu,
+  volumeSlider,
 }: {
   id: string;
   title: string;
@@ -99,6 +106,7 @@ function Lane({
   tracks: Track[];
   inPool: boolean;
   onMenu: (e: React.MouseEvent, idx: number) => void;
+  volumeSlider?: React.ReactNode;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: `lane:${id}` });
   return (
@@ -114,6 +122,7 @@ function Lane({
         <span className="lane__count">{tracks.length}</span>
       </div>
       {subtitle && <div className="lane__sub">{subtitle}</div>}
+      {volumeSlider && <div className="lane__mix">{volumeSlider}</div>}
       <div className="lane__body">
         {tracks.length === 0 ? (
           <div className="lane__empty">{inPool ? "all tracks assigned" : "drop tracks here"}</div>
@@ -133,7 +142,11 @@ export function AssignBoard({
   hostName,
   serverHostTracks,
   serverAssignments,
+  trackGains,
+  memberGains,
+  currentSong,
   disabled,
+  resyncToken,
   onApplied,
 }: Props) {
   const toast = useToast();
@@ -171,6 +184,34 @@ export function AssignBoard({
       setDraft(serverDraft);
     }
   }, [serverKey, serverDraft, dirty]);
+
+  // a loaded preset overrides whatever is on the board, even unsaved edits
+  useEffect(() => {
+    if (!resyncToken) return;
+    setDirty(false);
+    lastServerKey.current = "";
+  }, [resyncToken]);
+
+  // wipe the board when the song changes so old picks dont map onto the
+  // new song's tracks (the server already clears its side on load)
+  const songRef = useRef<string | null | undefined>(undefined);
+  useEffect(() => {
+    const song = currentSong ?? null;
+    if (songRef.current === undefined) {
+      songRef.current = song;
+      return;
+    }
+    if (song !== songRef.current) {
+      songRef.current = song;
+      setDirty(false);
+      lastServerKey.current = "";
+      setDraft(() => {
+        const empty: AssignmentMap = {};
+        for (const m of members) empty[m] = [];
+        return empty;
+      });
+    }
+  }, [currentSong, members]);
 
   const assignedSet = useMemo(() => {
     const s = new Set<number>();
@@ -255,7 +296,32 @@ export function AssignBoard({
     setDirty(true);
   }
 
+  async function onMemberVol(name: string, level: number) {
+    try {
+      await api.setMemberVolume(name, level);
+      onApplied();
+    } catch (e: any) {
+      toast.push(`volume: ${e.message}`, "err");
+    }
+  }
+
+  async function onTrackVol(index: number, level: number) {
+    try {
+      await api.setTrackVolume(index, level);
+      onApplied();
+    } catch (e: any) {
+      toast.push(`track volume: ${e.message}`, "err");
+    }
+  }
+
+  const memberGain = (m: string) => {
+    const g = memberGains?.[m];
+    return typeof g === "number" ? g : 0.5;
+  };
+
   const activeTrack = activeIdx != null ? byIndex.get(activeIdx) : null;
+  const menuTrack = menu ? byIndex.get(menu.idx) : null;
+  const menuTrackGain = menu ? trackGains?.[String(menu.idx)] ?? 1 : 1;
 
   return (
     <section className="board panel">
@@ -291,7 +357,7 @@ export function AssignBoard({
             <Lane
               id={POOL}
               title="Unassigned"
-              subtitle={"drag a track onto a bandmate, or use the \u22EF menu"}
+              subtitle={"drag a track onto a bandmate, or use its menu button"}
               tracks={poolTracks}
               inPool
               onMenu={(e, idx) => setMenu({ idx, x: e.clientX, y: e.clientY })}
@@ -305,6 +371,17 @@ export function AssignBoard({
                 tracks={(draft[m] || []).map((i) => byIndex.get(i)).filter(Boolean) as Track[]}
                 inPool={false}
                 onMenu={(e, idx) => setMenu({ idx, x: e.clientX, y: e.clientY })}
+                volumeSlider={
+                  <VolumeSlider
+                    value={memberGain(m)}
+                    min={0}
+                    max={2}
+                    step={0.05}
+                    disabled={disabled}
+                    onCommit={(v) => onMemberVol(m, v)}
+                    title={`${m} volume`}
+                  />
+                }
               />
             ))}
           </div>
@@ -316,7 +393,7 @@ export function AssignBoard({
                 style={{ ["--fam" as any]: familyFor(activeTrack.display_label).color }}
               >
                 <span className="chip__glyph" aria-hidden>
-                  {familyFor(activeTrack.display_label).glyph}
+                  <FontAwesomeIcon icon={familyFor(activeTrack.display_label).icon} />
                 </span>
                 <span className="chip__label">
                   {activeTrack.display_label || activeTrack.name}
@@ -332,8 +409,30 @@ export function AssignBoard({
           <div className="menu-scrim" onClick={() => setMenu(null)} />
           <div
             className="menu"
-            style={{ left: Math.min(menu.x, window.innerWidth - 200), top: menu.y + 6 }}
+            style={{ left: Math.min(menu.x, window.innerWidth - 248), top: Math.min(menu.y + 6, window.innerHeight - 320) }}
           >
+            {menuTrack && (
+              <div className="menu__track">
+                <span className="menu__track-name" title={menuTrack.display_label || menuTrack.name}>
+                  {menuTrack.display_label || menuTrack.instrument || menuTrack.name || `track ${menu.idx}`}
+                </span>
+                <span className="menu__track-notes">{menuTrack.note_count} notes</span>
+              </div>
+            )}
+            <div className="menu__vol">
+              <span className="menu__vol-label">Track volume</span>
+              <VolumeSlider
+                value={menuTrackGain}
+                min={0}
+                max={2}
+                step={0.05}
+                disabled={disabled}
+                onCommit={(v) => onTrackVol(menu.idx, v)}
+                format={(v) => `${Math.round(v * 100)}%`}
+                title="track volume, applies on next play"
+              />
+              <span className="menu__vol-hint">applies on next play</span>
+            </div>
             <div className="menu__head">assign track to</div>
             {members.map((m) => (
               <button
