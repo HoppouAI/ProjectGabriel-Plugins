@@ -677,6 +677,13 @@ button {
   overflow-y: auto;
   padding-right: 4px;
 }
+/* audio songs expand inline with their own scrolling stem list, so let
+   this list grow and have the page scroll instead of clipping the uploader */
+.songlist--audio {
+  max-height: none;
+  overflow: visible;
+  padding-right: 0;
+}
 .songlist__empty {
   color: var(--faint);
   font-size: 13px;
@@ -767,6 +774,15 @@ button {
   padding: 4px 11px 11px 11px;
   border-top: 1px solid var(--line);
   background: var(--navy-850);
+}
+/* stems scroll on their own so the upload button below stays in view */
+.stems__list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  max-height: 230px;
+  overflow-y: auto;
+  padding-right: 2px;
 }
 .stem {
   display: flex;

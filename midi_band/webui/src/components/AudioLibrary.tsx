@@ -111,7 +111,7 @@ export function AudioLibrary({ currentSong, isHost, onChanged }: Props) {
         </div>
       )}
 
-      <ul className="songlist">
+      <ul className="songlist songlist--audio">
         {songs.length === 0 ? (
           <li className="songlist__empty">
             {isHost
@@ -198,15 +198,17 @@ function AudioSongRow({
 
       {expanded && (
         <div className="stems">
-          {stems.map((st) => (
-            <StemRow
-              key={st.index}
-              song={song.name}
-              stem={st}
-              isHost={isHost}
-              onChanged={onChanged}
-            />
-          ))}
+          <div className="stems__list">
+            {stems.map((st) => (
+              <StemRow
+                key={st.index}
+                song={song.name}
+                stem={st}
+                isHost={isHost}
+                onChanged={onChanged}
+              />
+            ))}
+          </div>
           {isHost && (
             <StemUploader
               song={song.name}

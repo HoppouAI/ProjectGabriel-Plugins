@@ -30,6 +30,9 @@ READY_TIMEOUT = 3.0
 # audio clients download + decode their stems before acking, the first play
 # of a song can take a while so give them a lot more room than midi.
 AUDIO_READY_TIMEOUT = 30.0
+# clients ping every 4s, so if we hear nothing for this long the socket is a
+# half-open ghost (client crashed / restarted) and we reap it.
+PEER_IDLE_TIMEOUT = 15.0
 
 
 def _now() -> float:
@@ -250,6 +253,18 @@ class BandServer:
                 writer.close()
                 return
             peer_name = str(hello.get("name") or peer_name)
+            # one name = one peer. a client that reconnects (restart, network
+            # blip, audio deps relaunch) opens a fresh socket while the old
+            # half-open one can linger as a ghost, kick any stale same-name
+            # peer before adding this one so the roster doesn't duplicate.
+            for old_w, old_p in list(self._peers.items()):
+                if old_w is not writer and old_p.name == peer_name:
+                    self._peers.pop(old_w, None)
+                    try:
+                        old_w.close()
+                    except Exception:
+                        pass
+                    logger.info(f"midi_band: replaced stale peer: {peer_name}")
             self._peers[writer] = _Peer(peer_name, writer)
             writer.write(P.encode({"type": P.WELCOME, "name": self.instance_name}))
             await writer.drain()
@@ -266,7 +281,13 @@ class BandServer:
                 except Exception:
                     pass
             while not self._stop:
-                line = await reader.readline()
+                try:
+                    line = await asyncio.wait_for(
+                        reader.readline(), timeout=PEER_IDLE_TIMEOUT
+                    )
+                except asyncio.TimeoutError:
+                    logger.info(f"midi_band: peer {peer_name} idle, dropping")
+                    break
                 if not line:
                     break
                 try:
