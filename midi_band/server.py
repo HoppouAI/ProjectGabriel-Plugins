@@ -108,6 +108,8 @@ class BandServer:
         # it picks up the host key even if it lands after setup
         self._conductor_key_provider = conductor_key_provider
         self._conductor_model = conductor_model or "gemini-3.1-flash-lite"
+        # one long-lived chat session so the conductor is genuinely multi-turn
+        self._conductor_session = None
 
         # saved assignment layouts, persisted under the plugin data dir
         self._presets_path = presets_path
@@ -601,37 +603,192 @@ class BandServer:
         host_tracks = bucket.pop(self.instance_name, [])
         return self.assign_tracks(host_tracks, bucket)
 
-    async def ai_conduct(self, prompt: str) -> dict:
-        """Let the AI conductor assign the loaded song's tracks to the band
-        based on a vibe prompt, then apply the arrangement."""
+    def _conductor(self):
+        if self._conductor_session is None:
+            self._conductor_session = _conductor.ConductorSession(
+                self._conductor_key_provider, self._conductor_model,
+            )
+        return self._conductor_session
+
+    def conductor_reset(self) -> dict:
+        """Forget the conductor's chat history and start fresh."""
+        if self._conductor_session is not None:
+            self._conductor_session.reset()
+        return {"result": "ok"}
+
+    async def ai_conduct_stream(self, prompt: str):
+        """Stream one conductor turn. Yields event dicts the webui relays to
+        the browser: text / tool / applied / error / done."""
         if not self._loaded_info:
-            return {"result": "error", "message": "load a song before conducting"}
-        api_key = ""
-        if self._conductor_key_provider:
-            try:
-                api_key = str(self._conductor_key_provider() or "")
-            except Exception:
-                api_key = ""
-        members = [self.instance_name] + [p.name for p in self._peers.values()]
-        res = await _conductor.conduct(
-            api_key=api_key,
-            song=self._loaded_song or "",
-            tracks=self._loaded_info["tracks"],
-            members=members,
-            host_name=self.instance_name,
-            vibe=str(prompt or ""),
-            model=self._conductor_model,
-        )
-        if res.get("result") != "ok":
-            return res
-        applied = self.assign_tracks(res.get("host_tracks") or [], res.get("client_assignments") or {})
-        if applied.get("result") == "ok":
-            applied.update({
-                "reasoning": res.get("reasoning"),
-                "unassigned_tracks": res.get("unassigned_tracks"),
-                "unknown_members": res.get("unknown_members"),
+            yield {"type": "error", "message": "load a song before conducting"}
+            return
+        async for ev in self._conductor().send(str(prompt or ""), self):
+            yield ev
+
+    # ----- conductor tool surface (called by ConductorSession via ctx) -----
+
+    def _instrument_name(self, bank, program, presets=None) -> Optional[str]:
+        try:
+            b = int(bank)
+            p = int(program)
+        except Exception:
+            return None
+        if presets:
+            for it in presets:
+                if it.get("bank") == b and it.get("program") == p:
+                    return it.get("name")
+        if b == 0 and 0 <= p < len(midi_utils.GM_PROGRAMS):
+            return midi_utils.GM_PROGRAMS[p]
+        if b == 128:
+            return f"Kit {p}"
+        return f"bank {b} program {p}"
+
+    def conductor_snapshot(self) -> dict:
+        """Current band state in the shape conductor._state_block wants."""
+        info = self._loaded_info or {}
+        tracks_in = info.get("tracks", []) if info else []
+        per_track: Dict[int, List[str]] = {}
+        for ti in self._host_tracks:
+            per_track.setdefault(int(ti), []).append(self.instance_name)
+        for name, lst in self._assignments.items():
+            for ti in (lst or []):
+                per_track.setdefault(int(ti), []).append(name)
+        presets = None
+        tracks = []
+        for t in tracks_in:
+            idx = int(t.get("index"))
+            label = t.get("display_label") or t.get("instrument") or t.get("name") or f"track {idx}"
+            chans = t.get("channels")
+            if not isinstance(chans, list):
+                chans = [t.get("channel")] if t.get("channel") is not None else []
+            drum = 9 in [c for c in chans if isinstance(c, int)]
+            inst = None
+            ov = self._track_programs.get(idx)
+            if ov:
+                if presets is None:
+                    presets = self.list_soundfont_presets()
+                inst = self._instrument_name(ov.get("bank", 0), ov.get("program", 0), presets)
+            tracks.append({
+                "index": idx,
+                "label": label,
+                "drum": bool(drum),
+                "notes": int(t.get("note_count", 0) or 0),
+                "members": per_track.get(idx, []),
+                "instrument": inst,
             })
-        return applied
+        members = [{"name": self.instance_name, "is_host": True}]
+        for p in self._peers.values():
+            members.append({"name": p.name, "is_host": False})
+        return {
+            "song": self._loaded_song,
+            "mode": self.mode,
+            "host_name": self.instance_name,
+            "members": members,
+            "tracks": tracks,
+        }
+
+    def conductor_list_instruments(self, query=None) -> list:
+        presets = self.list_soundfont_presets()
+        items = []
+        if presets:
+            for it in presets:
+                items.append({
+                    "name": it.get("name"),
+                    "bank": it.get("bank"),
+                    "program": it.get("program"),
+                })
+        else:
+            for p, nm in enumerate(midi_utils.GM_PROGRAMS):
+                items.append({"name": nm, "bank": 0, "program": p})
+        q = str(query or "").strip().lower()
+        if q:
+            items = [it for it in items if q in str(it.get("name", "")).lower()]
+        # keep the tool response bounded
+        return items[:300]
+
+    def _resolve_instrument(self, name):
+        q = str(name or "").strip().lower()
+        if not q:
+            return None
+        presets = self.list_soundfont_presets()
+        pool = []
+        if presets:
+            for it in presets:
+                pool.append((str(it.get("name", "")), int(it.get("bank", 0)), int(it.get("program", 0))))
+        else:
+            for p, nm in enumerate(midi_utils.GM_PROGRAMS):
+                pool.append((nm, 0, p))
+        for nm, b, p in pool:
+            if nm.lower() == q:
+                return (b, p)
+        for nm, b, p in pool:
+            if q in nm.lower():
+                return (b, p)
+        return None
+
+    def conductor_apply_assignments(self, args) -> dict:
+        if not self._loaded_info:
+            return {"result": "error", "message": "no song is loaded", "_summary": "no song loaded"}
+        raw = args.get("assignments") or []
+        members = [self.instance_name] + [p.name for p in self._peers.values()]
+        valid_idx = {int(t["index"]) for t in self._loaded_info["tracks"]
+                     if int(t.get("note_count", 0) or 0) > 0}
+        parsed = _conductor.parse_assignments(raw, members, self.instance_name, valid_idx)
+        host_tracks = parsed["host_tracks"]
+        client_assignments = parsed["client_assignments"]
+        if not host_tracks and not client_assignments:
+            return {"result": "error", "message": "that arrangement was empty",
+                    "unknown_members": parsed["unknown_members"], "_summary": "couldn't place anyone"}
+        applied = self.assign_tracks(host_tracks, client_assignments)
+        if applied.get("result") != "ok":
+            applied.setdefault("_summary", "couldn't set the arrangement")
+            return applied
+        reasoning = str(args.get("reasoning") or "").strip()
+        return {
+            "result": "ok",
+            "host_tracks": host_tracks,
+            "assignments": client_assignments,
+            "unassigned_tracks": sorted(valid_idx - parsed["used"]),
+            "unknown_members": parsed["unknown_members"],
+            "_summary": reasoning or "set the arrangement",
+        }
+
+    def conductor_set_instrument(self, args) -> dict:
+        if self.mode != P.MODE_MIDI:
+            return {"result": "error", "message": "instrument changes only work in MIDI mode",
+                    "_summary": "re-voicing is MIDI-mode only"}
+        if not self._loaded_info:
+            return {"result": "error", "message": "no song is loaded", "_summary": "no song loaded"}
+        try:
+            track = int(args.get("track"))
+        except Exception:
+            return {"result": "error", "message": "need a track index", "_summary": "no track given"}
+        tracks = self._loaded_info["tracks"]
+        if track < 0 or track >= len(tracks):
+            return {"result": "error", "message": "that track index is out of range", "_summary": "bad track"}
+        label = tracks[track].get("display_label") or tracks[track].get("instrument") or f"track {track}"
+        if args.get("reset"):
+            self.set_track_instrument(track, None)
+            return {"result": "ok", "track": track, "_summary": f"reset {label} to its own sound"}
+        bank = args.get("bank")
+        program = args.get("program")
+        name = str(args.get("instrument") or "").strip()
+        if program is None and name:
+            resolved = self._resolve_instrument(name)
+            if resolved is None:
+                return {"result": "error", "message": f"couldn't find a sound called '{name}'",
+                        "_summary": f"no sound called '{name}'"}
+            bank, program = resolved
+        if program is None:
+            return {"result": "error", "message": "name an instrument or give bank and program",
+                    "_summary": "no instrument given"}
+        res = self.set_track_instrument(track, program, bank if bank is not None else 0)
+        if res.get("result") != "ok":
+            res.setdefault("_summary", "couldn't change the sound")
+            return res
+        nm = self._instrument_name(res.get("bank", 0), res.get("program", 0))
+        res["_summary"] = f"set {label} to {nm}"
+        return res
 
     # ----- saved assignment presets -----
 

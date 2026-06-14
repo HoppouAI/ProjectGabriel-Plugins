@@ -4,7 +4,7 @@ import type {
   SyncStatus,
   PresetsResponse,
   PresetLoadResult,
-  ConductorResult,
+  ConductorEvent,
   SoundfontResponse,
   AudioSongsResponse,
   ModeResponse,
@@ -51,8 +51,61 @@ export const api = {
     postJson("/api/track_instrument", { index, program, bank }),
   // instruments the host's soundfont ships, for the per-track picker
   soundfont: () => req<SoundfontResponse>("/api/soundfont"),
-  conduct: (prompt: string) =>
-    postJson<ConductorResult>("/api/conductor", { prompt }),
+  // chat with the AI conductor, streamed as newline-delimited JSON events.
+  // onEvent fires for each event as it lands. resolves when the turn ends.
+  conductStream: async (
+    prompt: string,
+    onEvent: (ev: ConductorEvent) => void,
+    signal?: AbortSignal,
+  ) => {
+    const r = await fetch("/api/conductor/stream", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt }),
+      signal,
+    });
+    if (!r.ok || !r.body) {
+      let msg = `HTTP ${r.status}`;
+      try {
+        const d = await r.json();
+        msg = d?.message || msg;
+      } catch {
+        /* no body */
+      }
+      throw new Error(msg);
+    }
+    const reader = r.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    const flush = (chunk: string) => {
+      buf += chunk;
+      let nl: number;
+      while ((nl = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, nl).trim();
+        buf = buf.slice(nl + 1);
+        if (!line) continue;
+        try {
+          onEvent(JSON.parse(line) as ConductorEvent);
+        } catch {
+          /* ignore a partial / bad line */
+        }
+      }
+    };
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      flush(decoder.decode(value, { stream: true }));
+    }
+    const tail = buf.trim();
+    if (tail) {
+      try {
+        onEvent(JSON.parse(tail) as ConductorEvent);
+      } catch {
+        /* ignore */
+      }
+    }
+  },
+  conductorReset: () => req("/api/conductor/reset", { method: "POST" }),
   soundcheck: (duration = 8, bpm = 120) =>
     postJson("/api/soundcheck", { duration, bpm }),
 

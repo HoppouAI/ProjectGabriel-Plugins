@@ -1,18 +1,20 @@
-"""AI band conductor: hands a song's track list to Gemini and lets it
-assign every part to a band member via function calling.
+"""AI band conductor: a streaming, multi-turn chat with Gemini that can
+arrange the loaded song and re-voice its tracks through function calling.
 
-Same google-genai pattern the diary plugin uses. Lazy imports so the
-plugin still loads fine when google-genai isn't installed, the conduct
-call just returns an error in that case.
+The host keeps one ConductorSession alive so the conversation is real
+multi-turn. Lazy imports so the plugin still loads fine when google-genai
+isn't installed, a send just yields an error in that case.
 """
 from __future__ import annotations
 
 import logging
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "gemini-3.1-flash-lite"
+# cap tool round-trips per user turn so a confused model can't loop forever
+MAX_TOOL_ROUNDS = 6
 
 
 def _match_member(name: str, members: List[str]) -> Optional[str]:
@@ -35,167 +37,21 @@ def _match_member(name: str, members: List[str]) -> Optional[str]:
     return None
 
 
-def _build_user_prompt(song: str, tracks: List[dict], members: List[str],
-                       host_name: str, vibe: str) -> str:
-    lines = [f'Song: "{song}"', "", "Tracks you can assign:"]
-    for t in tracks:
-        idx = t.get("index")
-        label = t.get("display_label") or t.get("instrument") or t.get("name") or f"track {idx}"
-        notes = t.get("note_count", 0)
-        ch = t.get("channel")
-        drum = " (drum kit)" if ch == 9 else ""
-        lines.append(f"  - track {idx}: {label}{drum}, {notes} notes")
-    lines.append("")
-    lines.append("Band members available to play (assign every part to one of these names):")
-    for m in members:
-        tag = " (you, the host)" if m == host_name else ""
-        lines.append(f"  - {m}{tag}")
-    lines.append("")
-    lines.append(f"What the user is going for: {vibe.strip() or 'a balanced, full sounding arrangement'}")
-    return "\n".join(lines)
-
-
-def _build_declarations(gtypes):
-    return [
-        gtypes.FunctionDeclaration(
-            name="assignTracks",
-            description=(
-                "Assign the song's tracks to the band. Call this exactly once. Each entry is "
-                "one track plus the list of members who play it. Put several members on the "
-                "same track to make that part sound bigger, like a choir or a string section, "
-                "each extra member adds another voice to it. Leave a track out entirely to keep "
-                "it silent. Spread the parts so the arrangement matches what the user asked for."
-            ),
-            parameters=gtypes.Schema(
-                type=gtypes.Type.OBJECT,
-                required=["assignments"],
-                properties={
-                    "assignments": gtypes.Schema(
-                        type=gtypes.Type.ARRAY,
-                        description="One entry per track to play.",
-                        items=gtypes.Schema(
-                            type=gtypes.Type.OBJECT,
-                            required=["track", "members"],
-                            properties={
-                                "track": gtypes.Schema(
-                                    type=gtypes.Type.INTEGER,
-                                    description="The track index to assign.",
-                                ),
-                                "members": gtypes.Schema(
-                                    type=gtypes.Type.ARRAY,
-                                    description=(
-                                        "Names of the band members who all play this track at "
-                                        "once. Usually one, but list several to thicken the part "
-                                        "into a section (choir, strings, big pad or lead)."
-                                    ),
-                                    items=gtypes.Schema(type=gtypes.Type.STRING),
-                                ),
-                            },
-                        ),
-                    ),
-                    "reasoning": gtypes.Schema(
-                        type=gtypes.Type.STRING,
-                        description="One short sentence on the arrangement choices you made.",
-                    ),
-                },
-            ),
-        )
-    ]
-
-
-async def conduct(
-    api_key: str,
-    song: str,
-    tracks: List[dict],
-    members: List[str],
-    host_name: str,
-    vibe: str,
-    model: str = DEFAULT_MODEL,
-) -> dict:
-    """Ask the model to assign tracks. Returns a dict with host_tracks +
-    client_assignments ready to feed BandServer.assign_tracks, or an error."""
-    if not api_key:
-        return {"result": "error", "message": "no Gemini API key set for the conductor"}
-    if not members:
-        return {"result": "error", "message": "no band members to assign to"}
-    playable = [t for t in tracks if t.get("note_count", 0) > 0]
-    if not playable:
-        return {"result": "error", "message": "this song has no playable tracks"}
-
-    try:
-        from google import genai
-        from google.genai import types as gtypes
-    except Exception:
-        return {"result": "error", "message": "google-genai is not installed, cannot run the conductor"}
-
-    valid_idx = {int(t["index"]) for t in playable}
-    system = (
-        "You are the conductor of a live band. Each member is a separate player who can only "
-        "play the tracks you give them, all at once. Assign every meaningful track to a member "
-        "so the song sounds full. Match the user's described vibe: if they want it stripped "
-        "back, leave busy tracks out; if they want it big, use everyone. Keep one player from "
-        "being buried under too many parts unless it makes sense. Drums usually go to a single "
-        "player. You can put several members on the same track to thicken it into a section, "
-        "this is how you turn one voice into a real choir, string or pad section, do it when the "
-        "user wants something big, lush or choral but dont double every part or it turns to "
-        "mush. Call assignTracks once with your full plan."
-    )
-    user = _build_user_prompt(song, playable, members, host_name, vibe)
-
-    try:
-        client = genai.Client(api_key=api_key)
-        response = await client.aio.models.generate_content(
-            model=model,
-            contents=user,
-            config=gtypes.GenerateContentConfig(
-                system_instruction=[gtypes.Part.from_text(text=system)],
-                temperature=0.7,
-                thinking_config=gtypes.ThinkingConfig(thinking_level="MINIMAL"),
-                tools=[gtypes.Tool(function_declarations=_build_declarations(gtypes))],
-                tool_config=gtypes.ToolConfig(
-                    function_calling_config=gtypes.FunctionCallingConfig(
-                        mode="ANY", allowed_function_names=["assignTracks"],
-                    )
-                ),
-                safety_settings=[
-                    gtypes.SafetySetting(category=c, threshold="BLOCK_NONE")
-                    for c in (
-                        "HARM_CATEGORY_HARASSMENT",
-                        "HARM_CATEGORY_HATE_SPEECH",
-                        "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-                        "HARM_CATEGORY_DANGEROUS_CONTENT",
-                    )
-                ],
-            ),
-        )
-    except Exception as e:
-        logger.error(f"midi_band: conductor model call failed: {e}")
-        return {"result": "error", "message": f"conductor failed: {e}"}
-
-    call = None
-    for fc in (response.function_calls or []):
-        if fc.name == "assignTracks":
-            call = fc
-            break
-    if call is None:
-        return {"result": "error", "message": "the conductor didn't return an arrangement"}
-
-    args = dict(call.args or {})
-    raw = args.get("assignments") or []
-    reasoning = str(args.get("reasoning") or "").strip()
-
+def parse_assignments(raw, members: List[str], host_name: str, valid_idx) -> dict:
+    """Turn a raw assignments array [{track, members:[..]}] into host_tracks +
+    client_assignments ready for BandServer.assign_tracks. Tolerant of name
+    drift and a legacy single 'member' string."""
     host_tracks: List[int] = []
     client_assignments: Dict[str, List[int]] = {}
     used: set = set()
     unknown_members: set = set()
-    for item in raw:
+    for item in raw or []:
         try:
             ti = int(item.get("track"))
         except (TypeError, ValueError, AttributeError):
             continue
         if ti not in valid_idx:
             continue
-        # accept the members array, or a legacy single "member" string
         who_list = item.get("members")
         if who_list is None:
             single = item.get("member")
@@ -215,15 +71,302 @@ async def conduct(
                 lst = client_assignments.setdefault(who, [])
                 if ti not in lst:
                     lst.append(ti)
-
-    if not host_tracks and not client_assignments:
-        return {"result": "error", "message": "the conductor's arrangement was empty"}
-
     return {
-        "result": "ok",
         "host_tracks": host_tracks,
         "client_assignments": client_assignments,
-        "reasoning": reasoning,
-        "unassigned_tracks": sorted(valid_idx - used),
         "unknown_members": sorted(unknown_members),
+        "used": used,
     }
+
+
+def _state_block(snap: dict) -> str:
+    """Compact summary of the band's current state, prepended to every user
+    turn so the model always knows what's loaded and who plays what."""
+    song = snap.get("song")
+    if not song:
+        return "No song is loaded yet. Ask the user to load one, or just chat."
+    mode = snap.get("mode") or "midi"
+    lines = [f'Song: "{song}" ({mode} mode)']
+    members = snap.get("members") or []
+    if members:
+        names = []
+        for m in members:
+            nm = m.get("name")
+            names.append(f"{nm} (you, host)" if m.get("is_host") else nm)
+        lines.append("Band: " + ", ".join(names))
+    lines.append("Tracks:")
+    for t in snap.get("tracks") or []:
+        idx = t.get("index")
+        label = t.get("label") or f"track {idx}"
+        drum = " [drum kit]" if t.get("drum") else ""
+        who = ", ".join(t.get("members") or []) or "unassigned"
+        inst = t.get("instrument")
+        inst_s = f", sounding as {inst}" if inst else ""
+        lines.append(f"  {idx}: {label}{drum} -> {who}{inst_s}")
+    if mode == "audio":
+        lines.append("(re-voicing tracks is a MIDI-mode thing, not available right now)")
+    return "\n".join(lines)
+
+
+def _build_declarations(gtypes):
+    S = gtypes.Schema
+    T = gtypes.Type
+    return [
+        gtypes.FunctionDeclaration(
+            name="assignTracks",
+            description=(
+                "Set who in the band plays which tracks of the loaded song. Each entry is one "
+                "track plus the members who play it. Put several members on the same track to "
+                "thicken it into a section (choir, strings, big pad). Leave a track out to keep "
+                "it silent. This replaces the whole arrangement, so include every track you want "
+                "heard.\n"
+                "**Invocation Condition:** when the user asks you to arrange the song, hand out "
+                "parts, or change who plays what."
+            ),
+            parameters=S(
+                type=T.OBJECT,
+                required=["assignments"],
+                properties={
+                    "assignments": S(
+                        type=T.ARRAY,
+                        description="One entry per track to play.",
+                        items=S(
+                            type=T.OBJECT,
+                            required=["track", "members"],
+                            properties={
+                                "track": S(type=T.INTEGER, description="The track index to assign."),
+                                "members": S(
+                                    type=T.ARRAY,
+                                    description=(
+                                        "Names of the band members who all play this track at "
+                                        "once. Usually one, list several to double it into a section."
+                                    ),
+                                    items=S(type=T.STRING),
+                                ),
+                            },
+                        ),
+                    ),
+                    "reasoning": S(
+                        type=T.STRING,
+                        description="One short sentence on the arrangement choices, in your own voice.",
+                    ),
+                },
+            ),
+        ),
+        gtypes.FunctionDeclaration(
+            name="listInstruments",
+            description=(
+                "Look up the instrument voices you can give a track, including any custom "
+                "soundfont sounds loaded on this rig. Returns each sound's name plus its bank "
+                "and program numbers.\n"
+                "**Invocation Condition:** call before setTrackInstrument so you pick an exact "
+                "sound, or when the user asks what instruments or sounds are available."
+            ),
+            parameters=S(
+                type=T.OBJECT,
+                properties={
+                    "query": S(
+                        type=T.STRING,
+                        description=(
+                            "Optional filter matched against the sound names, e.g. 'piano' or "
+                            "'choir'. Omit to list everything."
+                        ),
+                    ),
+                },
+            ),
+        ),
+        gtypes.FunctionDeclaration(
+            name="setTrackInstrument",
+            description=(
+                "Change the voice a single track plays as, overriding the song's original "
+                "instrument. Name the sound (from listInstruments) or give its bank and program "
+                "numbers. Set reset true to drop the override and go back to the song's own "
+                "instrument. Works in MIDI mode only.\n"
+                "**Invocation Condition:** when the user asks to make a track sound like a "
+                "different instrument. Prefer calling listInstruments first for the exact name."
+            ),
+            parameters=S(
+                type=T.OBJECT,
+                required=["track"],
+                properties={
+                    "track": S(type=T.INTEGER, description="The track index to change."),
+                    "instrument": S(
+                        type=T.STRING,
+                        description="The sound's name from listInstruments. Optional if bank+program given.",
+                    ),
+                    "bank": S(type=T.INTEGER, description="Soundfont bank number. Use together with program."),
+                    "program": S(type=T.INTEGER, description="Program number 0-127. Use together with bank."),
+                    "reset": S(type=T.BOOLEAN, description="True to clear the override back to the song's own instrument."),
+                },
+            ),
+        ),
+    ]
+
+
+def _system_instruction(host_name: str) -> str:
+    return (
+        f"You are {host_name}, the conductor and arranger of a live band that performs in "
+        "VRChat. Each band member is a separate player who plays only the tracks you hand them, "
+        "all at the same time. You are chatting with the user in your control room.\n\n"
+        "You can:\n"
+        "- Hand out parts: call assignTracks to set who plays which tracks. Put several members "
+        "on one track to thicken it into a section, leave a track out to silence it.\n"
+        "- Re-voice a track: call setTrackInstrument to make a track sound like a different "
+        "instrument, including custom soundfont sounds. Call listInstruments first to find the "
+        "exact sound you want.\n\n"
+        "Every message starts with a [band state] block telling you the loaded song, the "
+        "members, and every track with its index, who plays it and what it sounds like. Trust it "
+        "as the truth and use those track indices when you call tools.\n\n"
+        "Talk like a bandmate: warm, brief, a sentence or two. After you change something, say "
+        "what you did in plain words ('put Alex on the bassline', 'gave the lead a warm pad'). If "
+        "the user is just chatting, chat back, no need to call a tool. Match the vibe they ask "
+        "for, strip parts out for something sparse, use everyone for something huge. Never "
+        "mention indices, banks, programs or any of the wiring, just talk about the music."
+    )
+
+
+def _iter_parts(chunk):
+    try:
+        cands = chunk.candidates or []
+        if not cands or cands[0] is None or cands[0].content is None:
+            return []
+        return cands[0].content.parts or []
+    except Exception:
+        return []
+
+
+def _function_response_part(gtypes, fc, result):
+    name = getattr(fc, "name", "") or ""
+    resp = result if isinstance(result, dict) else {"result": result}
+    fid = getattr(fc, "id", None)
+    if fid:
+        try:
+            return gtypes.Part.from_function_response(name=name, response=resp, id=fid)
+        except TypeError:
+            pass
+    return gtypes.Part.from_function_response(name=name, response=resp)
+
+
+def _exec_tool(fc, ctx):
+    """Run one model tool call against the band. Returns (result_dict,
+    did_apply, ui_summary)."""
+    name = getattr(fc, "name", "") or ""
+    args = dict(getattr(fc, "args", None) or {})
+    try:
+        if name == "assignTracks":
+            res = ctx.conductor_apply_assignments(args)
+            summary = res.pop("_summary", None) or "set the arrangement"
+            return res, res.get("result") == "ok", summary
+        if name == "listInstruments":
+            items = ctx.conductor_list_instruments(args.get("query"))
+            return ({"result": "ok", "count": len(items), "instruments": items},
+                    False, f"found {len(items)} sound(s)")
+        if name == "setTrackInstrument":
+            res = ctx.conductor_set_instrument(args)
+            summary = res.pop("_summary", None) or "changed a sound"
+            return res, res.get("result") == "ok", summary
+    except Exception as e:
+        logger.debug(f"midi_band: conductor tool {name} failed: {e}")
+        return {"result": "error", "message": str(e)}, False, f"{name} failed"
+    return {"result": "error", "message": f"unknown tool {name}"}, False, "unknown tool"
+
+
+class ConductorSession:
+    """A persistent, streaming chat with the conductor model. Holds one async
+    chat so the conversation is genuinely multi-turn. Tool calls run against
+    the band through the ctx passed to send()."""
+
+    def __init__(self, key_provider, model: str = DEFAULT_MODEL):
+        self._key_provider = key_provider
+        self._model = model or DEFAULT_MODEL
+        self._chat = None
+        self._client = None
+        self._host_name = ""
+
+    def reset(self):
+        self._chat = None
+        self._client = None
+
+    def _config(self, gtypes):
+        return gtypes.GenerateContentConfig(
+            system_instruction=[gtypes.Part.from_text(text=_system_instruction(self._host_name or "the conductor"))],
+            thinking_config=gtypes.ThinkingConfig(thinking_level="MINIMAL"),
+            tools=[gtypes.Tool(function_declarations=_build_declarations(gtypes))],
+            automatic_function_calling=gtypes.AutomaticFunctionCallingConfig(disable=True),
+            safety_settings=[
+                gtypes.SafetySetting(category=c, threshold="BLOCK_NONE")
+                for c in (
+                    "HARM_CATEGORY_HARASSMENT",
+                    "HARM_CATEGORY_HATE_SPEECH",
+                    "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                    "HARM_CATEGORY_DANGEROUS_CONTENT",
+                )
+            ],
+        )
+
+    async def send(self, user_text: str, ctx):
+        """Stream one user turn. Yields event dicts: text / tool / applied /
+        error / done."""
+        key = ""
+        if self._key_provider:
+            try:
+                key = str(self._key_provider() or "")
+            except Exception:
+                key = ""
+        if not key:
+            yield {"type": "error", "message": "no Gemini API key set for the conductor"}
+            return
+        try:
+            from google import genai
+            from google.genai import types as gtypes
+        except Exception:
+            yield {"type": "error", "message": "google-genai is not installed, cannot run the conductor"}
+            return
+
+        snap = {}
+        try:
+            snap = ctx.conductor_snapshot() or {}
+        except Exception as e:
+            logger.debug(f"midi_band: conductor snapshot failed: {e}")
+
+        if self._chat is None:
+            self._host_name = str(getattr(ctx, "instance_name", "") or "the conductor")
+            try:
+                self._client = genai.Client(api_key=key)
+                self._chat = self._client.aio.chats.create(model=self._model, config=self._config(gtypes))
+            except Exception as e:
+                logger.error(f"midi_band: conductor chat init failed: {e}")
+                yield {"type": "error", "message": f"conductor init failed: {e}"}
+                return
+
+        message: Any = f"[band state]\n{_state_block(snap)}\n[end band state]\n\n{str(user_text or '').strip()}"
+        try:
+            for _ in range(MAX_TOOL_ROUNDS):
+                fcalls = []
+                async for chunk in await self._chat.send_message_stream(message):
+                    for part in _iter_parts(chunk):
+                        txt = getattr(part, "text", None)
+                        if txt and not getattr(part, "thought", False):
+                            yield {"type": "text", "delta": txt}
+                        fc = getattr(part, "function_call", None)
+                        if fc is not None:
+                            fcalls.append(fc)
+                if not fcalls:
+                    break
+                resp_parts = []
+                applied = False
+                for fc in fcalls:
+                    result, did_apply, summary = _exec_tool(fc, ctx)
+                    if did_apply:
+                        applied = True
+                    ok = result.get("result") == "ok" if isinstance(result, dict) else True
+                    yield {"type": "tool", "tool": getattr(fc, "name", ""), "ok": ok, "summary": summary}
+                    resp_parts.append(_function_response_part(gtypes, fc, result))
+                if applied:
+                    yield {"type": "applied"}
+                message = resp_parts
+        except Exception as e:
+            logger.error(f"midi_band: conductor turn failed: {e}")
+            yield {"type": "error", "message": f"conductor failed: {e}"}
+            return
+        yield {"type": "done"}

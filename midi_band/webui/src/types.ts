@@ -155,12 +155,24 @@ export interface PresetLoadResult {
   forced?: boolean;
 }
 
-export interface ConductorResult {
-  result: string; // "ok" | "error"
-  message?: string;
-  host_tracks?: number[];
-  assignments?: Record<string, number[]>;
-  reasoning?: string;
-  unassigned_tracks?: number[];
-  unknown_members?: string[];
+// streaming conductor events, one JSON object per NDJSON line
+export type ConductorEvent =
+  | { type: "text"; delta: string }
+  | { type: "tool"; tool: string; ok: boolean; summary: string }
+  | { type: "applied" }
+  | { type: "error"; message: string }
+  | { type: "done" };
+
+// a tool action the conductor took, shown as a chip under its reply
+export interface ConductorToolNote {
+  summary: string;
+  ok: boolean;
+}
+
+// one message in the conductor chat transcript
+export interface ConductorMessage {
+  role: "user" | "assistant";
+  text: string;
+  tools?: ConductorToolNote[];
+  error?: boolean;
 }

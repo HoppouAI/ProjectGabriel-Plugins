@@ -144,15 +144,19 @@ What you can do from it:
   whole section instead of one lonely voice. Open a track's `...` menu
   and tick every bandmate who should play it (or "Play on everyone"), a
   doubled track shows a small count badge on its chips.
-- Let the **AI conductor** do the split for you: type what you're going
-  for ("stripped back and moody, keep me on piano, drums to one person")
-  and the model assigns every track to a bandmate via function calling.
-  It can stack several bandmates on the same part when you ask for
-  something big, lush or choral, so the arrangement actually swells.
-  Needs `google-genai` and a Gemini API key, see `conductor_api_key` /
-  `conductor_model` in `config.yml.example`. If the key or package is
-  missing the rest of the control room still works, the conductor just
-  reports it can't run.
+- Chat with the **AI conductor**: click it in the sidebar to pop open a
+  chat window in the middle of the screen, tell it what you're going for
+  ("stripped back and moody, keep me on piano", "make it huge, double the
+  strings") and it streams a reply back while it works. It arranges the
+  song for you, stacking several bandmates on one part when you ask for
+  something big or choral, and it can re-voice a track too ("give the lead
+  a warm pad", "turn the bass into a synth"), digging through your
+  soundfont's own sounds to find the right one. It's a real back and
+  forth, so keep refining and it remembers the conversation, hit the
+  refresh icon for a clean slate. Needs `google-genai` and a Gemini API
+  key, see `conductor_api_key` / `conductor_model` in `config.yml.example`.
+  If the key or package is missing the rest of the control room still
+  works, the conductor just reports it can't run.
 - Swap a track's instrument: open its `...` menu and pick a different
   one, or "Default (from MIDI)" to fall back to whatever the song asked
   for. The picker is built from your soundfont's own presets, grouped by

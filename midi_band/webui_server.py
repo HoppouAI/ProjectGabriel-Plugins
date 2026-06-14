@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import queue
 import re
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -168,8 +169,10 @@ class _Handler(BaseHTTPRequestHandler):
             return self._handle_volume()
         if path == "/api/track_instrument":
             return self._handle_track_instrument()
-        if path == "/api/conductor":
-            return self._handle_conductor()
+        if path == "/api/conductor/stream":
+            return self._handle_conductor_stream()
+        if path == "/api/conductor/reset":
+            return self._handle_conductor_reset()
         if path == "/api/soundcheck":
             return self._handle_soundcheck()
         if path == "/api/mode":
@@ -498,22 +501,61 @@ class _Handler(BaseHTTPRequestHandler):
         except Exception as e:
             return self._json(500, {"result": "error", "message": str(e)})
 
-    def _handle_conductor(self):
+    def _handle_conductor_reset(self):
+        srv = self._server_obj()
+        if srv is None:
+            return self._json(400, {"result": "error", "message": "host only"})
+        try:
+            return self._json(200, srv.conductor_reset())
+        except Exception as e:
+            return self._json(500, {"result": "error", "message": str(e)})
+
+    def _handle_conductor_stream(self):
         srv = self._server_obj()
         if srv is None:
             return self._json(400, {"result": "error", "message": "host only"})
         body = self._read_json()
         prompt = str(body.get("prompt") or "").strip()
+        if not prompt:
+            return self._json(400, {"result": "error", "message": "prompt required"})
         loop = getattr(srv, "_loop", None)
         if loop is None or not loop.is_running():
             return self._json(503, {"result": "error", "message": "band server not running"})
-        # the model call can take a while, give it a roomy timeout
+        q: "queue.Queue" = queue.Queue()
+        sentinel = object()
+
+        async def _run():
+            # drive the conductor generator on the band loop, hand each event
+            # over to this request thread through the queue
+            try:
+                async for ev in srv.ai_conduct_stream(prompt):
+                    q.put(ev)
+            except Exception as e:
+                q.put({"type": "error", "message": str(e)})
+            finally:
+                q.put(sentinel)
+
         try:
-            fut = asyncio.run_coroutine_threadsafe(srv.ai_conduct(prompt), loop)
-            res = fut.result(timeout=60.0)
+            asyncio.run_coroutine_threadsafe(_run(), loop)
         except Exception as e:
             return self._json(500, {"result": "error", "message": str(e)})
-        return self._json(200, res or {"result": "ok"})
+
+        self.send_response(200)
+        self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Accel-Buffering", "no")
+        self.end_headers()
+        try:
+            while True:
+                ev = q.get()
+                if ev is sentinel:
+                    break
+                self.wfile.write((json.dumps(ev) + "\n").encode("utf-8"))
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        except Exception as e:
+            logger.debug(f"midi_band webui: conductor stream error: {e}")
 
     def _handle_soundcheck(self):
         srv = self._server_obj()
