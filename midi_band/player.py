@@ -17,10 +17,12 @@ logger = logging.getLogger(__name__)
 _fs_mod = None
 _fs_err: Optional[str] = None
 
-# keep-warm "sync tone": a single sustained note on a reserved channel that
-# holds a soft hum so VRChat's voice gate / jitter buffer stay warm and the
-# band stops drifting between phrases. drawbar organ sustains dead flat.
-TONE_CHANNEL = 15
+# keep-warm "sync tone": a single sustained note that holds a soft hum so
+# VRChat's voice gate / jitter buffer stay warm and the band stops drifting
+# between phrases. drawbar organ sustains dead flat. it lives on channel 16,
+# one past the 16 a MIDI song can use (pyfluidsynth gives the synth 256
+# channels), so a song can never stomp the tone's volume or timbre.
+TONE_CHANNEL = 16
 TONE_NOTE = 45      # A2, a low hum
 TONE_PROGRAM = 16   # GM drawbar organ
 TONE_VELOCITY = 100
@@ -75,8 +77,9 @@ class MidiPlayer:
         self._preset_cache: Optional[list] = None
         self._preset_index: Optional[set] = None
         self.on_finished: Callable[[], None] = lambda: None
-        # keep-warm tone: a sustained note held on TONE_CHANNEL. survives
-        # song start/stop because _all_notes_off skips its channel.
+        # keep-warm tone: a sustained note held on TONE_CHANNEL, which sits
+        # above the 16 channels a MIDI song can use so playback never
+        # touches it and its volume sticks where the user set it.
         self._tone_active = False
         self._tone_level = 0.15
 
@@ -386,10 +389,8 @@ class MidiPlayer:
         fs = self._fs
         if fs is None:
             return
+        # only the 16 song channels, never the reserved tone channel above them
         for ch in range(16):
-            # leave the keep-warm tone ringing through song start/stop/pause
-            if self._tone_active and ch == TONE_CHANNEL:
-                continue
             try:
                 fs.cc(ch, 123, 0)  # all notes off
                 fs.cc(ch, 120, 0)  # all sound off
