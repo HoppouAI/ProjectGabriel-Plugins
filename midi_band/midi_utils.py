@@ -10,6 +10,47 @@ import io
 from pathlib import Path
 from typing import List, Optional
 
+
+def _install_lenient_meta():
+    """mido aborts the whole file on a malformed meta event, eg a truncated
+    time_signature (fewer than the 4 data bytes it wants). Plenty of midis in
+    the wild have these and lenient players (VanBasco etc) just shrug them off.
+    Wrap mido's build_meta_message so a bad meta event is kept as raw bytes
+    instead of crashing the parse. Patched once, at import."""
+    try:
+        from mido.midifiles import meta as _meta
+        from mido.midifiles import midifiles as _mf
+    except Exception:
+        return
+    orig = getattr(_mf, "build_meta_message", None)
+    if orig is None or getattr(orig, "_pg_lenient", False):
+        return
+    Unknown = _meta.UnknownMetaMessage
+
+    def lenient_build_meta_message(meta_type, data, delta=0):
+        try:
+            return orig(meta_type, data, delta)
+        except Exception:
+            # short/garbled meta event, keep the raw bytes so the rest of
+            # the track still parses instead of nuking the whole file.
+            try:
+                return Unknown(meta_type, list(data), delta)
+            except Exception:
+                return Unknown(meta_type, [], delta)
+
+    lenient_build_meta_message._pg_lenient = True
+    # read_meta_message in midifiles.py captured the symbol by name, so patch
+    # there. patch the meta module too for any other caller.
+    _mf.build_meta_message = lenient_build_meta_message
+    try:
+        _meta.build_meta_message = lenient_build_meta_message
+    except Exception:
+        pass
+
+
+_install_lenient_meta()
+
+
 # General MIDI program names so the AI sees readable instruments instead of
 # raw program numbers when picking who plays what.
 GM_PROGRAMS = [
@@ -319,7 +360,7 @@ def parse_tracks(file_bytes: bytes) -> dict:
     Costs one full pass through the file, do it once on load.
     """
     import mido
-    mid = mido.MidiFile(file=io.BytesIO(file_bytes))
+    mid = mido.MidiFile(file=io.BytesIO(file_bytes), clip=True)
     tpb = mid.ticks_per_beat
     tempo_map = _build_tempo_map(mid)
 
@@ -422,7 +463,7 @@ def expand_track_events(file_bytes: bytes, track_indices: list,
     asked for. Wins over both the file's own program_change and our
     name-based guess."""
     import mido
-    mid = mido.MidiFile(file=io.BytesIO(file_bytes))
+    mid = mido.MidiFile(file=io.BytesIO(file_bytes), clip=True)
     tpb = mid.ticks_per_beat
     tempo_map = _build_tempo_map(mid)
 
