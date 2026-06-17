@@ -806,9 +806,11 @@ class BandServer:
         if idle_members or silent_tracks:
             out["fix_hint"] = (
                 "Some members are idle or playable tracks are silent. Unless the user "
-                "wanted it sparse, call assignTracks again so every member plays and every "
-                "track is covered. Soak up spare members by doubling the soft harmony "
-                "voices (choir, pad, strings, brass, organ)."
+                "wanted it sparse, call assignTracks again so every track is covered and "
+                "members are used where you can. You may ONLY soak up spare members by "
+                "doubling a choir or vocal voice (choir, 'aah', 'ooh'). Every other "
+                "instrument stays unique, never double it. If there is nothing vocal to "
+                "double, it is fine to leave an extra member idle."
             )
         return out
 

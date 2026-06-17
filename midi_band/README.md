@@ -154,14 +154,14 @@ What you can do from it:
   ("stripped back and moody, keep me on piano", "make it huge, double the
   strings") and it streams a reply back while it works. By default it goes
   for a full, centered mix: it covers every part, keeps everyone playing,
-  and stacks several bandmates on the soft harmony voices (choir, pad,
-  strings, brass) so they sound rich and wide, while leaving the drums,
-  bass and lead on a single player so they stay tight. It checks its own
-  work and re-balances if it left someone idle. It can re-voice a track
-  too ("give the lead a warm pad", "turn the bass into a synth"), digging
-  through your soundfont's own sounds to find the right one. It's a real
-  back and forth, so keep refining and it remembers the conversation, hit
-  the refresh icon for a clean slate. Needs `google-genai` and a Gemini API
+  and stacks several bandmates on the choir and vocal voices (choir,
+  'aah', 'ooh') so they sound rich and wide, while every other instrument
+  stays on a single player so nothing flams. It checks its own work and
+  re-balances if it left someone idle. It can re-voice a track too ("give
+  the lead a warm pad", "turn the bass into a synth"), digging through your
+  soundfont's own sounds to find the right one. It's a real back and
+  forth, so keep refining and it remembers the conversation, hit the
+  refresh icon for a clean slate. Needs `google-genai` and a Gemini API
   key, see `conductor_api_key` / `conductor_model` in `config.yml.example`.
   If the key or package is missing the rest of the control room still
   works, the conductor just reports it can't run.
