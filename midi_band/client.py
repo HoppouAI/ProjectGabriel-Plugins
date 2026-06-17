@@ -70,6 +70,7 @@ class BandClient:
         self._pending_file_b64: Optional[str] = None
         self._pending_tracks: List[int] = []
         self._pending_song: str = ""
+        self._pending_song_label: str = ""
         self._pending_track_names: List[str] = []
         self._pending_track_programs: dict = {}
         self._pending_duration: float = 0.0
@@ -123,7 +124,7 @@ class BandClient:
         return {
             "connected": self._connected,
             "name": self.name,
-            "song": s["song"] or self._pending_song or None,
+            "song": self._pending_song_label or s["song"] or self._pending_song or None,
             "tracks": s["tracks"] or self._pending_track_names,
             "playing": s["playing"],
             "paused": s.get("paused"),
@@ -289,6 +290,18 @@ class BandClient:
                 pass
             self.on_change()
             return
+        if kind == P.TONE:
+            try:
+                on = bool(msg.get("on"))
+                gain = float(msg.get("gain") or 0.0)
+                if on:
+                    self.player.start_tone(gain)
+                else:
+                    self.player.stop_tone()
+            except Exception as e:
+                logger.warning(f"midi_band: client tone toggle failed: {e}")
+            self.on_change()
+            return
         if kind == P.SYNC_TICK:
             self._handle_sync_tick(msg)
             return
@@ -383,6 +396,7 @@ class BandClient:
         self._pending_file_b64 = file_b64
         self._pending_tracks = tracks
         self._pending_song = song
+        self._pending_song_label = str(msg.get("song_label") or "")
         self._pending_track_names = track_names
         self._pending_track_programs = dict(msg.get("track_programs") or {})
         self._pending_duration = duration
@@ -444,6 +458,7 @@ class BandClient:
         self._pending_mode = P.MODE_AUDIO
         self._pending_session = session
         self._pending_song = song
+        self._pending_song_label = str(msg.get("song_label") or "")
         self._pending_duration = duration
         self._pending_track_names = [str(s.get("label") or "") for s in stems]
         self._pending_mix = None

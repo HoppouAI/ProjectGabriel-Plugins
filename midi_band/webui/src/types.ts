@@ -35,6 +35,9 @@ export interface SoundfontResponse {
 export interface SongEntry {
   name: string;
   size: number;
+  // friendly name to show instead of the filename, defaults to the name
+  // minus its .mid extension when the host hasn't set a custom one
+  display?: string;
 }
 
 export interface SongsResponse {
@@ -84,6 +87,9 @@ export interface Status {
   role: "host" | "client";
   mode?: BandMode;
   song?: string | null;
+  // friendly label for what's playing: a live preset name or the song's
+  // display name. falls back to song when absent.
+  song_label?: string | null;
   tracks?: Track[];
   host_tracks?: number[];
   assignments?: Record<string, number[]>;
@@ -100,6 +106,10 @@ export interface Status {
   track_programs?: Record<string, TrackProgram | number>;
   // false when this host has no soundfont, so its synth is silent
   has_soundfont?: boolean;
+  // keep-warm sync tone: a soft continuous hum every member plays to hold
+  // VRChat's voice gate open. on/off plus a 0..1 level.
+  tone_on?: boolean;
+  tone_gain?: number;
 }
 
 export interface SyncMember {

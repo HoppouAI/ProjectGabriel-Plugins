@@ -108,6 +108,8 @@ export const api = {
   conductorReset: () => req("/api/conductor/reset", { method: "POST" }),
   soundcheck: (duration = 8, bpm = 120) =>
     postJson("/api/soundcheck", { duration, bpm }),
+  setTone: (on: boolean, gain: number) =>
+    postJson("/api/tone", { on, gain }),
 
   // manual assignment: host_tracks plus { clientName: trackIndices }
   assign: (host_tracks: number[], client_assignments: Record<string, number[]>) =>
@@ -118,6 +120,8 @@ export const api = {
   savePreset: (name: string) => postJson("/api/presets/save", { name }),
   loadPreset: (name: string, force = false) =>
     postJson<PresetLoadResult>("/api/presets/load", { name, force }),
+  renamePreset: (old: string, name: string) =>
+    postJson("/api/presets/rename", { old, name }),
   deletePreset: (name: string) => postJson("/api/presets/delete", { name }),
 
   upload: async (file: File) => {
@@ -131,6 +135,10 @@ export const api = {
 
   remove: (name: string) =>
     req(`/api/songs/${encodeURIComponent(name)}`, { method: "DELETE" }),
+
+  // give a midi a friendly display name, empty clears back to the filename
+  renameSong: (name: string, display: string) =>
+    postJson("/api/songs/rename", { name, display }),
 
   // ----- audio band mode -----
   getMode: () => req<ModeResponse>("/api/mode"),

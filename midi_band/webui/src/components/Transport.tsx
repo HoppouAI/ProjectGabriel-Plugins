@@ -7,6 +7,7 @@ import {
   faStop,
   faCheck,
   faVolumeHigh,
+  faTowerBroadcast,
 } from "@fortawesome/free-solid-svg-icons";
 import type { Status } from "../types";
 import { api } from "../api";
@@ -35,10 +36,25 @@ export function Transport({ status, isHost, audioMode, onAction }: Props) {
     }
   }, [status?.gain]);
 
+  // keep-warm sync tone: a soft hum every member plays so VRChat's voice
+  // gate stays open and the band stops drifting between phrases.
+  const toneOn = !!status?.tone_on;
+  const [toneVol, setToneVol] = useState(0.15);
+  const lastToneEdit = useRef(0);
+  const toneTimer = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (Date.now() - lastToneEdit.current > 1500 && typeof status?.tone_gain === "number") {
+      setToneVol(status.tone_gain);
+    }
+  }, [status?.tone_gain]);
+
   const playing = !!status?.playing;
   const paused = !!status?.paused;
   const countIn = !!status?.in_count_in;
   const song = status?.song || null;
+  // friendly name (preset or display name) for the now-playing line
+  const songLabel = status?.song_label || song;
   const dur = Number(status?.duration || 0);
   const pos = Number(status?.position || 0);
   const pct = dur > 0 ? Math.min(100, (pos / dur) * 100) : 0;
@@ -95,6 +111,28 @@ export function Transport({ status, isHost, audioMode, onAction }: Props) {
     }, 180);
   }
 
+  async function onToneToggle() {
+    try {
+      await api.setTone(!toneOn, toneVol);
+      onAction();
+    } catch (e: any) {
+      toast.push(`sync tone: ${e.message}`, "err");
+    }
+  }
+
+  function onToneVol(v: number) {
+    setToneVol(v);
+    lastToneEdit.current = Date.now();
+    if (toneTimer.current) window.clearTimeout(toneTimer.current);
+    toneTimer.current = window.setTimeout(async () => {
+      try {
+        await api.setTone(toneOn, v);
+      } catch (e: any) {
+        toast.push(`sync tone: ${e.message}`, "err");
+      }
+    }, 180);
+  }
+
   const fam = familyFor(song || "");
 
   return (
@@ -105,7 +143,7 @@ export function Transport({ status, isHost, audioMode, onAction }: Props) {
         </div>
         <div className="transport__meta">
           <div className="transport__song" title={song || ""}>
-            {song || "no song loaded"}
+            {songLabel || "no song loaded"}
           </div>
           <div className="transport__state">
             <span className={`pill pill--${stateClass}`}>{state}</span>
@@ -171,6 +209,28 @@ export function Transport({ status, isHost, audioMode, onAction }: Props) {
           />
           <span className="transport__vol-val">{vol.toFixed(2)}</span>
         </div>
+      </div>
+
+      <div className="transport__tone">
+        <button
+          className={`tbtn tbtn--tone${toneOn ? " is-on" : ""}`}
+          disabled={!isHost}
+          onClick={onToneToggle}
+          title="Keep-warm sync tone: a soft hum every member plays so VRChat's voice gate stays open and the band stops drifting"
+        >
+          <FontAwesomeIcon icon={faTowerBroadcast} /> sync tone {toneOn ? "on" : "off"}
+        </button>
+        <input
+          type="range"
+          min={0}
+          max={1}
+          step={0.01}
+          value={toneVol}
+          disabled={!isHost}
+          onChange={(e) => onToneVol(parseFloat(e.target.value))}
+          title="Sync tone volume"
+        />
+        <span className="transport__vol-val">{Math.round(toneVol * 100)}%</span>
       </div>
     </section>
   );

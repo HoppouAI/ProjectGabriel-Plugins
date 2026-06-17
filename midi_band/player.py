@@ -17,6 +17,14 @@ logger = logging.getLogger(__name__)
 _fs_mod = None
 _fs_err: Optional[str] = None
 
+# keep-warm "sync tone": a single sustained note on a reserved channel that
+# holds a soft hum so VRChat's voice gate / jitter buffer stay warm and the
+# band stops drifting between phrases. drawbar organ sustains dead flat.
+TONE_CHANNEL = 15
+TONE_NOTE = 45      # A2, a low hum
+TONE_PROGRAM = 16   # GM drawbar organ
+TONE_VELOCITY = 100
+
 
 def _load_fs():
     global _fs_mod, _fs_err
@@ -67,6 +75,10 @@ class MidiPlayer:
         self._preset_cache: Optional[list] = None
         self._preset_index: Optional[set] = None
         self.on_finished: Callable[[], None] = lambda: None
+        # keep-warm tone: a sustained note held on TONE_CHANNEL. survives
+        # song start/stop because _all_notes_off skips its channel.
+        self._tone_active = False
+        self._tone_level = 0.15
 
     def _default_driver(self) -> Optional[str]:
         # fluidsynth's auto driver is unreliable on Windows: it tries
@@ -375,11 +387,60 @@ class MidiPlayer:
         if fs is None:
             return
         for ch in range(16):
+            # leave the keep-warm tone ringing through song start/stop/pause
+            if self._tone_active and ch == TONE_CHANNEL:
+                continue
             try:
                 fs.cc(ch, 123, 0)  # all notes off
                 fs.cc(ch, 120, 0)  # all sound off
             except Exception:
                 pass
+
+    def start_tone(self, level: float = 0.15) -> bool:
+        """Hold a soft sustained hum on the reserved tone channel. level is
+        0.0 to 1.0, maps to channel volume. idempotent, re-call to retune."""
+        if not self._ensure_synth():
+            return False
+        self._tone_level = max(0.0, min(1.0, float(level)))
+        vol = int(round(self._tone_level * 127))
+        fs = self._fs
+        if fs is None:
+            return False
+        try:
+            if self._sfid is not None:
+                bank, prog = self._resolve_preset(0, TONE_PROGRAM)
+                fs.program_select(TONE_CHANNEL, self._sfid, bank, prog)
+            fs.cc(TONE_CHANNEL, 7, vol)    # channel volume
+            fs.cc(TONE_CHANNEL, 11, 127)   # expression wide open
+            if not self._tone_active:
+                fs.noteon(TONE_CHANNEL, TONE_NOTE, TONE_VELOCITY)
+            self._tone_active = True
+            return True
+        except Exception as e:
+            logger.warning(f"midi_band: start_tone failed: {e}")
+            return False
+
+    def set_tone_gain(self, level: float) -> None:
+        self._tone_level = max(0.0, min(1.0, float(level)))
+        fs = self._fs
+        if fs is None or not self._tone_active:
+            return
+        try:
+            fs.cc(TONE_CHANNEL, 7, int(round(self._tone_level * 127)))
+        except Exception:
+            pass
+
+    def stop_tone(self) -> None:
+        self._tone_active = False
+        fs = self._fs
+        if fs is None:
+            return
+        try:
+            fs.noteoff(TONE_CHANNEL, TONE_NOTE)
+            fs.cc(TONE_CHANNEL, 123, 0)
+            fs.cc(TONE_CHANNEL, 120, 0)
+        except Exception:
+            pass
 
     def stop_playback(self):
         with self._lock:

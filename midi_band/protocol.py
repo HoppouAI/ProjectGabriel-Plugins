@@ -25,6 +25,7 @@ VOLUME = "volume"
 SYNC_TICK = "sync_tick"
 ASSIGNMENTS = "assignments"
 SOUNDCHECK = "soundcheck"
+TONE = "tone"
 ERROR = "error"
 
 # band modes. carried on PREPARE so the client knows whether it's getting a

@@ -614,6 +614,37 @@ button {
   min-width: 34px;
 }
 
+/* keep-warm sync tone row, sits under the transport controls */
+.transport__tone {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--line);
+  flex-wrap: wrap;
+}
+.tbtn--tone {
+  font-family: var(--font-display);
+  font-size: 13px;
+  letter-spacing: 0.5px;
+  min-width: auto;
+  height: 40px;
+  gap: 8px;
+  color: var(--muted);
+}
+.tbtn--tone.is-on {
+  background: linear-gradient(145deg, var(--gold-bright), var(--gold));
+  color: #2a1d00;
+  border-color: rgba(0, 0, 0, 0.6);
+}
+.transport__tone input[type="range"] {
+  flex: 1;
+  min-width: 120px;
+  max-width: 220px;
+  accent-color: var(--gold);
+}
+
 /* ---------- library ---------- */
 
 .search {
@@ -724,10 +755,30 @@ button {
   font-size: 11px;
   color: var(--faint);
 }
+.song__file {
+  font-size: 10px;
+  color: var(--faint);
+  font-family: var(--font-mono, monospace);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0.8;
+}
 .song__btns {
   display: flex;
   gap: 6px;
   flex: none;
+}
+.song__edit {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+}
+.song__rename {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
 }
 
 /* ---------- audio stem songs ---------- */
@@ -843,6 +894,11 @@ button {
 .iconbtn--danger:hover {
   color: var(--magenta);
   border-color: var(--magenta);
+}
+.iconbtn--accent:hover {
+  color: var(--navy-900);
+  background: var(--gold);
+  border-color: var(--gold);
 }
 .stem-drop {
   display: flex;
@@ -960,6 +1016,12 @@ button {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.preset__rename {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 13px;
 }
 .preset__tracks {
   flex: none;

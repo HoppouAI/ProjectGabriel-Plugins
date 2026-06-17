@@ -132,7 +132,12 @@ filtered to the active mode so you only see ones you can actually load.
 
 What you can do from it:
 
-- Browse the song library and drag-drop `.mid` files in to upload.
+- Browse the song library and drag-drop `.mid` files in to upload. Hit
+  the pencil on a song to give it a friendly display name, so a file
+  called `Words and Music by... BLINDING LIGHTS.mid` can just read
+  "Blinding Lights" everywhere, in the list, the player, and the VRChat
+  chatbox. The chatbox also drops the `.mid` extension on its own. Clear
+  the name to fall back to the filename.
 - Load a song and see its tracks with instrument names and note counts.
   Type 0 (single track) midis, which pack every instrument onto one
   track, are split out per channel so each instrument is its own
@@ -171,7 +176,19 @@ What you can do from it:
   can force load without them and the missing parts drop back into the
   pool to reassign. Presets remember the track instrument swaps too, and
   are stored on the host under `data/plugins/midi_band/presets.json`.
+  Rename one any time with its pencil button. While a preset is the live
+  layout its name shows in the chatbox instead of the song's, so the band
+  reads as "Crazy Train (Full Band)" rather than the raw file.
 - Drive playback: play, pause, resume, stop, soundcheck, master volume.
+- Flip on the **sync tone**: a soft continuous hum every band member plays
+  at an adjustable volume. It exists for VRChat. VRChat gates each speaker's
+  voice and re-buffers it whenever they go quiet, so on higher-ping lobbies
+  the band drifts apart between phrases. A constant low hum keeps everyone's
+  voice channel open and warm so the per-phrase drift mostly goes away. Set
+  it just loud enough to clear VRChat's voice activation, low enough to bury
+  under the music. Won't fix a bad-ping lobby on its own, but it noticeably
+  steadies things. The toggle and its volume are host only and apply to the
+  whole band at once.
 - Watch per-member sync health (jitter, rtt, age) live.
 
 No auth, so only enable it on a trusted LAN. Set

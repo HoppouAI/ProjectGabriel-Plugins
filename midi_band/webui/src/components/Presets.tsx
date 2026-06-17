@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { faXmark } from "@fortawesome/free-solid-svg-icons";
+import { faXmark, faPen, faCheck } from "@fortawesome/free-solid-svg-icons";
 import type { PresetSummary } from "../types";
 import { api } from "../api";
 import { useToast } from "./Toasts";
@@ -17,6 +17,8 @@ export function Presets({ presets, isHost, canSave, onSaved, onLoaded }: Props) 
   const toast = useToast();
   const [name, setName] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
+  const [editing, setEditing] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
 
   if (!isHost) return null;
 
@@ -72,6 +74,25 @@ export function Presets({ presets, isHost, canSave, onSaved, onLoaded }: Props) 
     }
   }
 
+  async function saveRename(p: PresetSummary) {
+    const next = draft.trim();
+    if (!next || next === p.name) {
+      setEditing(null);
+      return;
+    }
+    setBusy(p.name);
+    try {
+      await api.renamePreset(p.name, next);
+      toast.push(`renamed to "${next}"`, "ok");
+      setEditing(null);
+      onSaved();
+    } catch (e: any) {
+      toast.push(`rename failed: ${e.message}`, "err");
+    } finally {
+      setBusy(null);
+    }
+  }
+
   return (
     <section className="presets panel">
       <div className="panel__head">
@@ -111,9 +132,24 @@ export function Presets({ presets, isHost, canSave, onSaved, onLoaded }: Props) 
             return (
               <li key={p.name} className={`preset${p.ready && !noSong ? " preset--ready" : ""}`}>
                 <div className="preset__top">
-                  <span className="preset__name" title={p.name}>
-                    {p.name}
-                  </span>
+                  {editing === p.name ? (
+                    <input
+                      className="search preset__rename"
+                      value={draft}
+                      autoFocus
+                      maxLength={60}
+                      disabled={working}
+                      onChange={(e) => setDraft(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") saveRename(p);
+                        if (e.key === "Escape") setEditing(null);
+                      }}
+                    />
+                  ) : (
+                    <span className="preset__name" title={p.name}>
+                      {p.name}
+                    </span>
+                  )}
                   <span className="preset__tracks">{p.track_count} trk</span>
                 </div>
                 <div className="preset__song" title={p.song || ""}>
@@ -130,32 +166,66 @@ export function Presets({ presets, isHost, canSave, onSaved, onLoaded }: Props) 
                     )}
                   </span>
                   <span className="preset__actions">
-                    {p.ready ? (
-                      <button
-                        className="btn btn--mini btn--accent"
-                        onClick={() => load(p, false)}
-                        disabled={noSong || working}
-                      >
-                        Load
-                      </button>
+                    {editing === p.name ? (
+                      <>
+                        <button
+                          className="btn btn--mini btn--accent"
+                          onClick={() => saveRename(p)}
+                          disabled={working}
+                          title="save name"
+                        >
+                          <FontAwesomeIcon icon={faCheck} />
+                        </button>
+                        <button
+                          className="btn btn--mini btn--ghost"
+                          onClick={() => setEditing(null)}
+                          disabled={working}
+                          title="cancel"
+                        >
+                          <FontAwesomeIcon icon={faXmark} />
+                        </button>
+                      </>
                     ) : (
-                      <button
-                        className="btn btn--mini btn--warn"
-                        onClick={() => load(p, true)}
-                        disabled={noSong || working}
-                        title={`force load without ${p.missing.join(", ")}`}
-                      >
-                        Force
-                      </button>
+                      <>
+                        {p.ready ? (
+                          <button
+                            className="btn btn--mini btn--accent"
+                            onClick={() => load(p, false)}
+                            disabled={noSong || working}
+                          >
+                            Load
+                          </button>
+                        ) : (
+                          <button
+                            className="btn btn--mini btn--warn"
+                            onClick={() => load(p, true)}
+                            disabled={noSong || working}
+                            title={`force load without ${p.missing.join(", ")}`}
+                          >
+                            Force
+                          </button>
+                        )}
+                        <button
+                          className="btn btn--mini btn--ghost preset__edit"
+                          onClick={() => {
+                            setEditing(p.name);
+                            setDraft(p.name);
+                          }}
+                          disabled={working}
+                          title="rename preset"
+                        >
+                          <FontAwesomeIcon icon={faPen} />
+                        </button>
+                        <button
+                          className="btn btn--mini btn--ghost preset__del"
+                          onClick={() => del(p)}
+                          disabled={working}
+                          title="delete preset"
+                        >
+                          <FontAwesomeIcon icon={faXmark} />
+                        </button>
+                      </>
                     )}
-                    <button
-                      className="btn btn--mini btn--ghost preset__del"
-                      onClick={() => del(p)}
-                      disabled={working}
-                      title="delete preset"
-                    >
-                      <FontAwesomeIcon icon={faXmark} />
-                    </button>
                   </span>
                 </div>
               </li>

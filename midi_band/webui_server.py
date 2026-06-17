@@ -151,10 +151,14 @@ class _Handler(BaseHTTPRequestHandler):
             return self._call_async("auto_assign_sync")
         if path == "/api/assign":
             return self._handle_assign()
+        if path == "/api/songs/rename":
+            return self._handle_song_rename()
         if path == "/api/presets/save":
             return self._handle_preset_save()
         if path == "/api/presets/load":
             return self._handle_preset_load()
+        if path == "/api/presets/rename":
+            return self._handle_preset_rename()
         if path == "/api/presets/delete":
             return self._handle_preset_delete()
         if path == "/api/play":
@@ -175,6 +179,8 @@ class _Handler(BaseHTTPRequestHandler):
             return self._handle_conductor_reset()
         if path == "/api/soundcheck":
             return self._handle_soundcheck()
+        if path == "/api/tone":
+            return self._handle_tone()
         if path == "/api/mode":
             return self._handle_mode_set()
         if path == "/api/load_audio":
@@ -203,16 +209,31 @@ class _Handler(BaseHTTPRequestHandler):
         store = getattr(self.server, "_store", None)
         if store is None:
             return self._json(500, {"result": "error", "message": "no library"})
+        srv = getattr(store, "band_server", None)
+
+        def display_for(name: str) -> str:
+            if srv is not None:
+                try:
+                    return srv.song_display_name(name)
+                except Exception:
+                    pass
+            for ext in (".midi", ".mid"):
+                if name.lower().endswith(ext):
+                    return name[: -len(ext)]
+            return name
+
         try:
             entries = []
             for p in sorted(store.library_dir.glob("*.mid")):
                 try:
-                    entries.append({"name": p.name, "size": p.stat().st_size})
+                    entries.append({"name": p.name, "size": p.stat().st_size,
+                                    "display": display_for(p.name)})
                 except Exception:
                     continue
             for p in sorted(store.library_dir.glob("*.midi")):
                 try:
-                    entries.append({"name": p.name, "size": p.stat().st_size})
+                    entries.append({"name": p.name, "size": p.stat().st_size,
+                                    "display": display_for(p.name)})
                 except Exception:
                     continue
             return self._json(200, {
@@ -340,6 +361,7 @@ class _Handler(BaseHTTPRequestHandler):
             out.update({
                 "mode": info.get("mode"),
                 "song": ps.get("song") or info.get("song"),
+                "song_label": srv.song_display_label() or None,
                 "tracks": info.get("tracks"),
                 "host_tracks": info.get("host_tracks"),
                 "assignments": info.get("assignments"),
@@ -354,6 +376,12 @@ class _Handler(BaseHTTPRequestHandler):
                 "members": [srv.instance_name] + srv.list_clients(),
                 "has_soundfont": ps.get("has_soundfont"),
             })
+            try:
+                ts = srv.tone_status()
+                out["tone_on"] = bool(ts.get("on"))
+                out["tone_gain"] = ts.get("gain")
+            except Exception:
+                pass
         except Exception as e:
             out["error"] = str(e)
         return self._json(200, out)
@@ -454,6 +482,34 @@ class _Handler(BaseHTTPRequestHandler):
             return self._json(400, {"result": "error", "message": "name required"})
         try:
             return self._json(200, srv.delete_preset(name))
+        except Exception as e:
+            return self._json(500, {"result": "error", "message": str(e)})
+
+    def _handle_song_rename(self):
+        srv = self._server_obj()
+        if srv is None:
+            return self._json(400, {"result": "error", "message": "host only"})
+        body = self._read_json()
+        name = str(body.get("name") or "").strip()
+        display = str(body.get("display") or "")
+        if not name:
+            return self._json(400, {"result": "error", "message": "name required"})
+        try:
+            return self._json(200, srv.rename_song(name, display))
+        except Exception as e:
+            return self._json(500, {"result": "error", "message": str(e)})
+
+    def _handle_preset_rename(self):
+        srv = self._server_obj()
+        if srv is None:
+            return self._json(400, {"result": "error", "message": "host only"})
+        body = self._read_json()
+        old = str(body.get("old") or "").strip()
+        new = str(body.get("name") or body.get("new") or "").strip()
+        if not old or not new:
+            return self._json(400, {"result": "error", "message": "old and new names required"})
+        try:
+            return self._json(200, srv.rename_preset(old, new))
         except Exception as e:
             return self._json(500, {"result": "error", "message": str(e)})
 
@@ -571,6 +627,20 @@ class _Handler(BaseHTTPRequestHandler):
         except Exception:
             bpm = 120.0
         return self._call_async("soundcheck", dur, bpm)
+
+    def _handle_tone(self):
+        srv = self._server_obj()
+        if srv is None:
+            return self._json(400, {"result": "error", "message": "host only"})
+        body = self._read_json()
+        on = bool(body.get("on"))
+        gain = body.get("gain")
+        if gain is not None:
+            try:
+                gain = float(gain)
+            except (TypeError, ValueError):
+                gain = None
+        return self._call_async("set_tone", on, gain)
 
     # ----- audio band mode -----
 

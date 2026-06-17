@@ -39,6 +39,14 @@ def _now() -> float:
     return time.monotonic()
 
 
+def _strip_ext(name: str) -> str:
+    """Drop a trailing .mid / .midi so the chatbox and UI show a clean name."""
+    for ext in (".midi", ".mid"):
+        if name.lower().endswith(ext):
+            return name[: -len(ext)]
+    return name
+
+
 class _Peer:
     def __init__(self, name: str, writer: asyncio.StreamWriter):
         self.name = name
@@ -115,6 +123,20 @@ class BandServer:
         self._presets_path = presets_path
         self._presets: Dict[str, dict] = {}
         self._load_presets()
+        # which saved preset is live right now, so the chatbox can show its
+        # name instead of the raw song file. cleared on any manual reassign.
+        self._active_preset: Optional[str] = None
+        # friendly display names for midi files, {filename: nice name}
+        self._song_names_path = (
+            self._presets_path.parent / "song_names.json" if self._presets_path else None
+        )
+        self._song_names: Dict[str, str] = {}
+        self._load_song_names()
+
+        # keep-warm "sync tone": a soft continuous hum every member plays to
+        # hold VRChat's voice gate open so the band stops drifting on phrases.
+        self._tone_on = False
+        self._tone_gain = 0.15
 
     # ----- lifecycle -----
 
@@ -190,6 +212,7 @@ class BandServer:
         self._assignments = {}
         self._host_tracks = []
         self._track_programs = {}
+        self._active_preset = None
         self.on_change()
         return {"result": "ok", "mode": self.mode}
 
@@ -278,6 +301,15 @@ class BandServer:
                     writer.write(P.encode({
                         "type": P.ASSIGNMENTS,
                         "assignments": self._assignments_for_broadcast(),
+                    }))
+                    await writer.drain()
+                except Exception:
+                    pass
+            # if the keep-warm tone is running, get this peer humming too
+            if self._tone_on:
+                try:
+                    writer.write(P.encode({
+                        "type": P.TONE, "on": True, "gain": self._tone_gain,
                     }))
                     await writer.drain()
                 except Exception:
@@ -407,6 +439,7 @@ class BandServer:
         self._assignments = {}
         self._host_tracks = []
         self._track_programs = {}
+        self._active_preset = None
         return {
             "result": "ok",
             "song": path.name,
@@ -505,6 +538,7 @@ class BandServer:
         self._assignments = {}
         self._host_tracks = []
         self._track_programs = {}
+        self._active_preset = None
         self.on_change()
         return {
             "result": "ok",
@@ -540,6 +574,8 @@ class BandServer:
             cleaned = clean(v)
             if cleaned:
                 self._assignments[str(k)] = cleaned
+        # a hand-rolled assignment is no longer faithfully the saved preset
+        self._active_preset = None
 
         if self._loop is not None and self._loop.is_running():
             self._loop.create_task(self._broadcast_assignments())
@@ -821,6 +857,92 @@ class BandServer:
         except Exception as e:
             logger.warning(f"midi_band: could not save presets: {e}")
 
+    def _load_song_names(self):
+        self._song_names = {}
+        if self._song_names_path is None:
+            return
+        try:
+            if self._song_names_path.exists():
+                data = json.loads(self._song_names_path.read_text("utf-8")) or {}
+                names = data.get("names") if isinstance(data, dict) else None
+                if isinstance(names, dict):
+                    self._song_names = {str(k): str(v) for k, v in names.items() if v}
+        except Exception as e:
+            logger.warning(f"midi_band: could not read song names: {e}")
+
+    def _save_song_names(self):
+        if self._song_names_path is None:
+            return
+        try:
+            self._song_names_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self._song_names_path.with_suffix(".tmp")
+            tmp.write_text(json.dumps({"names": self._song_names}, indent=2), "utf-8")
+            tmp.replace(self._song_names_path)
+        except Exception as e:
+            logger.warning(f"midi_band: could not save song names: {e}")
+
+    def song_display_name(self, filename: str) -> str:
+        """The friendly name for a song file: a saved override if one exists,
+        otherwise the filename with its .mid extension stripped."""
+        fn = str(filename or "")
+        if not fn:
+            return ""
+        return self._song_names.get(fn) or _strip_ext(fn)
+
+    def song_display_label(self) -> str:
+        """What the chatbox should show right now: the live preset's name if a
+        preset is what's playing, else the loaded song's friendly name."""
+        if not self._loaded_song:
+            return ""
+        if self._active_preset and self._active_preset in self._presets:
+            return self._active_preset
+        return self.song_display_name(self._loaded_song)
+
+    def rename_song(self, filename: str, display: str) -> dict:
+        """Give a midi file a friendly display name. An empty name (or one
+        that matches the default) clears the override."""
+        fn = str(filename or "").strip()
+        if not fn:
+            return {"result": "error", "message": "filename required"}
+        if not (self.library_dir / fn).exists():
+            return {"result": "error", "message": f"'{fn}' is not in the library"}
+        disp = re.sub(r"\s+", " ", str(display or "").strip())
+        disp = re.sub(r"[\x00-\x1f]", "", disp)[:80].strip()
+        if disp and disp != _strip_ext(fn):
+            self._song_names[fn] = disp
+        else:
+            self._song_names.pop(fn, None)
+        self._save_song_names()
+        self.on_change()
+        return {"result": "ok", "file": fn, "display": self.song_display_name(fn)}
+
+    def rename_preset(self, old: str, new: str) -> dict:
+        """Rename a saved layout. Keeps its song + assignments, just changes
+        the label shown in the UI and the chatbox."""
+        src = None
+        for key in (self._clean_preset_name(old), str(old or "").strip()):
+            if key in self._presets:
+                src = key
+                break
+        if src is None:
+            return {"result": "error", "message": f"no preset named '{old}'"}
+        dst = self._clean_preset_name(new)
+        if not dst:
+            return {"result": "error", "message": "new name required"}
+        if dst == src:
+            return {"result": "ok", "preset": src}
+        if dst in self._presets:
+            return {"result": "error", "message": f"a preset named '{dst}' already exists"}
+        pr = self._presets.pop(src)
+        pr["name"] = dst
+        pr["updated"] = time.time()
+        self._presets[dst] = pr
+        if self._active_preset == src:
+            self._active_preset = dst
+        self._save_presets()
+        self.on_change()
+        return {"result": "ok", "preset": dst, "renamed_from": src}
+
     def list_presets(self) -> dict:
         present = set(self.list_clients())
         loaded = self._loaded_song
@@ -874,6 +996,8 @@ class BandServer:
             "updated": now,
         }
         self._save_presets()
+        # saving the current layout makes it the live preset for the chatbox
+        self._active_preset = clean
         return {"result": "ok", "preset": clean}
 
     def load_preset(self, name: str, force: bool = False) -> dict:
@@ -933,6 +1057,8 @@ class BandServer:
         orphan: List[int] = []
         for m in missing:
             orphan.extend(assignments.get(m, []) or [])
+        # remember this preset is live so the chatbox shows its name
+        self._active_preset = clean
         res.update({
             "preset": clean,
             "song": self._loaded_song,
@@ -946,6 +1072,8 @@ class BandServer:
         for key in (self._clean_preset_name(name), str(name or "").strip()):
             if key in self._presets:
                 self._presets.pop(key, None)
+                if self._active_preset == key:
+                    self._active_preset = None
                 self._save_presets()
                 return {"result": "ok", "deleted": key}
         return {"result": "error", "message": f"no preset named '{name}'"}
@@ -1011,6 +1139,7 @@ class BandServer:
                     "type": P.PREPARE,
                     "session": session,
                     "song": self._loaded_song,
+                    "song_label": self.song_display_label(),
                     "file_b64": file_b64,
                     "tracks": tracks,
                     "track_names": track_names,
@@ -1123,6 +1252,7 @@ class BandServer:
                     "mode": P.MODE_AUDIO,
                     "session": session,
                     "song": self._loaded_song,
+                    "song_label": self.song_display_label(),
                     "http_port": int(self.audio_http_port),
                     "stems": stems,
                     "duration": duration,
@@ -1285,6 +1415,33 @@ class BandServer:
         await self._broadcast(P.encode({"type": P.VOLUME, "gain": applied}))
         self.on_change()
         return {"result": "ok", "gain": applied}
+
+    async def set_tone(self, on: bool, gain: Optional[float] = None) -> dict:
+        # keep-warm hum: turn it on/off and set its level for everyone at
+        # once. level is 0.0 to 1.0, applied on a reserved synth channel so
+        # it rides under whatever song is playing without colliding.
+        on = bool(on)
+        if gain is not None:
+            try:
+                self._tone_gain = max(0.0, min(1.0, float(gain)))
+            except (TypeError, ValueError):
+                pass
+        self._tone_on = on
+        try:
+            if on:
+                self.player.start_tone(self._tone_gain)
+            else:
+                self.player.stop_tone()
+        except Exception as e:
+            logger.warning(f"midi_band: host tone toggle failed: {e}")
+        await self._broadcast(P.encode({
+            "type": P.TONE, "on": on, "gain": self._tone_gain,
+        }))
+        self.on_change()
+        return {"result": "ok", "tone_on": self._tone_on, "tone_gain": self._tone_gain}
+
+    def tone_status(self) -> dict:
+        return {"on": self._tone_on, "gain": self._tone_gain}
 
     def get_sync_status(self) -> dict:
         """Snapshot of clock-sync health for every connected client."""
