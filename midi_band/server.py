@@ -780,14 +780,37 @@ class BandServer:
             applied.setdefault("_summary", "couldn't set the arrangement")
             return applied
         reasoning = str(args.get("reasoning") or "").strip()
-        return {
+        # tell the model who ended up idle and which playable tracks are silent
+        # so it can self-correct in a follow-up round instead of leaving gaps.
+        busy = set(client_assignments.keys())
+        if host_tracks:
+            busy.add(self.instance_name)
+        idle_members = [m for m in members if m not in busy]
+        label_by_idx = {
+            int(t["index"]): (t.get("display_label") or t.get("instrument") or f"track {t['index']}")
+            for t in self._loaded_info["tracks"]
+        }
+        silent_tracks = [
+            {"track": i, "label": label_by_idx.get(i, f"track {i}")}
+            for i in sorted(valid_idx - parsed["used"])
+        ]
+        out = {
             "result": "ok",
             "host_tracks": host_tracks,
             "assignments": client_assignments,
-            "unassigned_tracks": sorted(valid_idx - parsed["used"]),
+            "idle_members": idle_members,
+            "silent_tracks": silent_tracks,
             "unknown_members": parsed["unknown_members"],
             "_summary": reasoning or "set the arrangement",
         }
+        if idle_members or silent_tracks:
+            out["fix_hint"] = (
+                "Some members are idle or playable tracks are silent. Unless the user "
+                "wanted it sparse, call assignTracks again so every member plays and every "
+                "track is covered. Soak up spare members by doubling the soft harmony "
+                "voices (choir, pad, strings, brass, organ)."
+            )
+        return out
 
     def conductor_set_instrument(self, args) -> dict:
         if self.mode != P.MODE_MIDI:

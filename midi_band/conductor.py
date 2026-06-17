@@ -13,8 +13,9 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "gemini-3.1-flash-lite"
-# cap tool round-trips per user turn so a confused model can't loop forever
-MAX_TOOL_ROUNDS = 6
+# cap tool round-trips per user turn so a confused model can't loop forever.
+# generous so it has room to self-correct (assign, see idle members, re-assign).
+MAX_TOOL_ROUNDS = 10
 
 
 def _match_member(name: str, members: List[str]) -> Optional[str]:
@@ -95,15 +96,29 @@ def _state_block(snap: dict) -> str:
             names.append(f"{nm} (you, host)" if m.get("is_host") else nm)
         lines.append("Band: " + ", ".join(names))
     tracks = snap.get("tracks") or []
-    lines.append(f"Tracks ({len(tracks)} total, give them all a player unless asked otherwise):")
+    playable = [t for t in tracks if int(t.get("notes", 0) or 0) > 0]
+    lines.append(
+        f"Tracks ({len(playable)} playable, give them ALL a player and use EVERY "
+        "member unless asked otherwise):"
+    )
     for t in tracks:
         idx = t.get("index")
         label = t.get("label") or f"track {idx}"
         drum = " [drum kit]" if t.get("drum") else ""
+        empty = int(t.get("notes", 0) or 0) <= 0
         who = ", ".join(t.get("members") or []) or "unassigned"
         inst = t.get("instrument")
         inst_s = f", sounding as {inst}" if inst else ""
-        lines.append(f"  {idx}: {label}{drum} -> {who}{inst_s}")
+        tag = " (empty, skip)" if empty else ""
+        lines.append(f"  {idx}: {label}{drum}{tag} -> {who}{inst_s}")
+    assigned = set()
+    for t in tracks:
+        for w in (t.get("members") or []):
+            assigned.add(w)
+    idle = [m.get("name") for m in (members or [])
+            if m.get("name") and m.get("name") not in assigned]
+    if idle:
+        lines.append("Idle, no track yet (give them something): " + ", ".join(idle))
     if mode == "audio":
         lines.append("(re-voicing tracks is a MIDI-mode thing, not available right now)")
     return "\n".join(lines)
@@ -117,17 +132,23 @@ def _build_declarations(gtypes):
             name="assignTracks",
             description=(
                 "Set who in the band plays which tracks of the loaded song. Each entry is one "
-                "track plus the members who play it. Normally give each track exactly one member, "
-                "that is how a band sounds best. This replaces the whole arrangement in one shot, "
-                "so list every track you want heard, the ones you keep as well as the ones you "
-                "change. Any track you omit goes silent, so by default give every track a player, "
-                "the melody and bass and drums included, and only drop parts when the user wants "
-                "something sparse. Only put more than one member on the same track when the user "
-                "specifically asks to double or thicken it, and even then only for soft background "
-                "voices like a choir, pad or 'aah', never for main instruments like lead, bass or "
-                "drums since stacking those sounds bad.\n"
+                "track plus the members who play it. This REPLACES the whole arrangement in one "
+                "call, so list every track you want heard. Aim for a full, centered, amazing "
+                "sounding mix and follow these goals in order:\n"
+                "1. Cover every playable track. The melody, bass and drums MUST always have a "
+                "player. Only drop parts if the user asks for something sparse or stripped back.\n"
+                "2. Use every band member, nobody idle. If there are more members than tracks, "
+                "double parts so everyone is playing.\n"
+                "3. Double the soft sustained harmony voices, a choir, 'aah'/'ooh', pad, strings, "
+                "brass section, organ or synth pad, across two or three members. Stacking these "
+                "builds the rich, full, centered wall of sound the band wants, so do it freely by "
+                "default, not only when asked.\n"
+                "4. Keep the sharp parts single: exactly one member for each drum, bass, lead "
+                "melody or plucked/staccato track, since doubling those flams and sounds bad.\n"
+                "The call's result tells you if any member is idle or any track is silent, fix it "
+                "by calling assignTracks again before you reply.\n"
                 "**Invocation Condition:** when the user asks you to arrange the song, hand out "
-                "parts, or change who plays what."
+                "parts, double or thin a section, or change who plays what."
             ),
             parameters=S(
                 type=T.OBJECT,
@@ -144,10 +165,11 @@ def _build_declarations(gtypes):
                                 "members": S(
                                     type=T.ARRAY,
                                     description=(
-                                        "Names of the band members who play this track. Almost "
-                                        "always exactly one. Only list several when the user asked "
-                                        "to double a soft background voice like a choir or pad, "
-                                        "never for main instruments."
+                                        "Names of the band members who play this track. Use ONE "
+                                        "member for sharp parts (drums, bass, lead, plucked). Use "
+                                        "TWO or THREE for soft sustained harmony voices (choir, "
+                                        "'aah', pad, strings, brass, organ) to thicken and center "
+                                        "them. Spread parts so no member is left idle."
                                     ),
                                     items=S(type=T.STRING),
                                 ),
@@ -215,35 +237,37 @@ def _system_instruction(host_name: str) -> str:
     return (
         f"You are {host_name}, the conductor and arranger of a live band that performs in "
         "VRChat. Each band member is a separate player who plays only the tracks you hand them, "
-        "all at the same time. You are chatting with the user in your control room.\n\n"
+        "all at the same time, so your job is to spread the whole song across the whole band and "
+        "make it sound huge, full and centered. You are chatting with the user in your control "
+        "room.\n\n"
         "You can:\n"
-        "- Hand out parts: call assignTracks to set who plays which tracks, one member per "
-        "track.\n"
-        "- Re-voice a track: call setTrackInstrument to make a track sound like a different "
-        "instrument, including custom soundfont sounds. Call listInstruments first to find the "
-        "exact sound you want.\n\n"
-        "Every message starts with a [band state] block telling you the loaded song, the "
-        "members, and every track with its index, who plays it and what it sounds like. Trust it "
-        "as the truth and use those track indices when you call tools.\n\n"
-        "Arranging rules:\n"
-        "- assignTracks replaces the whole arrangement in one call, so it must list every track "
-        "you want heard, the ones you keep plus the ones you change. Any track you leave off "
-        "goes silent.\n"
-        "- By default give every track in the song a player, the melody and bass and drums "
-        "above all. Only leave parts out when the user actually asks for something sparse or "
-        "stripped back.\n"
-        "- One member per track. Do not stack several members on the same track unless the user "
-        "specifically asks to double or thicken it, and even then only for soft background "
-        "voices like a choir, pad or 'aah'. Never double main instruments like lead, bass or "
-        "drums, it sounds bad.\n"
-        "- You are a player too, not just the conductor, so take some tracks yourself and spread "
-        "the rest across all the members so nobody sits idle, unless the user wants a smaller "
-        "lineup.\n\n"
+        "- Hand out parts: assignTracks sets who plays which tracks. It replaces the whole "
+        "arrangement at once, so always list every track you want heard.\n"
+        "- Re-voice a track: setTrackInstrument makes a track sound like a different instrument, "
+        "including custom soundfont sounds. Call listInstruments first to get the exact sound "
+        "name.\n\n"
+        "Every message starts with a [band state] block: the loaded song, the members, and every "
+        "track with its index, who plays it and what it sounds like. It also flags any idle "
+        "member and any empty track. Trust it as the truth and use those track indices when you "
+        "call tools.\n\n"
+        "How to arrange (your default, aim for a full, centered, amazing sounding mix):\n"
+        "- Cover every playable track. Melody, bass and drums ALWAYS get a player. Only leave "
+        "parts out when the user actually asks for sparse or stripped back.\n"
+        "- Use every member, nobody sits idle. More members than tracks means you double parts "
+        "so everyone plays.\n"
+        "- Double the soft sustained harmony voices, a choir, 'aah'/'ooh', pad, strings, brass "
+        "section, organ or synth pad, across two or three members. This is what makes the band "
+        "sound rich, full and centered, so do it freely by default, not only when asked.\n"
+        "- Keep the sharp parts single: one member each for drums, bass, lead melody and plucked "
+        "or staccato tracks. Stacking those flams and sounds bad.\n"
+        "- You are a player too, so take some tracks yourself.\n"
+        "- Work it like an arranger: after you call assignTracks, the result lists anyone idle "
+        "and any track left silent. If that was not what you wanted, call assignTracks again to "
+        "cover them before you reply. Get the arrangement right first, then talk.\n\n"
         "Talk like a bandmate: warm, brief, a sentence or two. After you change something, say "
-        "what you did in plain words ('put Alex on the bassline', 'gave the lead a warm pad'). If "
-        "the user is just chatting, chat back, no need to call a tool. Match the vibe they ask "
-        "for. Never mention indices, banks, programs or any of the wiring, just talk about the "
-        "music."
+        "what you did in plain words ('put Alex and me on the choir', 'gave the lead a warm pad'). "
+        "If the user is just chatting, chat back, no tool needed. Match the vibe they ask for. "
+        "Never mention indices, banks, programs or any of the wiring, just talk about the music."
     )
 
 
