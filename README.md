@@ -10,7 +10,7 @@ the real time VRChat AI from [Hoppou.AI](https://hoppou.ai/).**
 [![Website](https://img.shields.io/badge/site-hoppou.ai-ff66c4?style=for-the-badge)](https://hoppou.ai/)
 [![License](https://img.shields.io/badge/license-AGPL--3.0-d22128?style=for-the-badge)](https://github.com/HoppouAI/ProjectGabriel-Remastered/blob/main/LICENSE)
 [![Plugins](https://img.shields.io/badge/plugins-8-9333ea?style=for-the-badge)](#plugin-matrix)
-[![API](https://img.shields.io/badge/api__version-2--3-2ea44f?style=for-the-badge)](#)
+[![API](https://img.shields.io/badge/api__version-2--4-2ea44f?style=for-the-badge)](#)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen?style=for-the-badge)](#contributing-a-plugin)
 
 </div>
@@ -58,10 +58,13 @@ Plugins extend Gabriel without touching the core code. A plugin can:
 | | Capability |
 |---|---|
 | **Tools** | Register Gemini function-calling tools the AI can use mid conversation |
-| **TTS / STT** | Add custom text to speech or speech to text providers |
+| **TTS** | Add custom text to speech providers (`tts.external_provider`) |
+| **STT / ASR** | Add custom speech to text providers for the local backend (`local.stt.external_provider`, api v4) |
+| **Vision** | Grab a screenshot of what the AI sees as JPEG bytes on demand, `ctx.capture_vision_frame()` (api v4) |
 | **Chatbox** | Write to the VRChat chatbox (now playing displays, status banners) |
 | **Prompt** | Inject extra text into the system prompt every session |
 | **Events** | Hook lifecycle events (`startup`, `shutdown`, `message_in`, `message_out`) |
+| **Audio** | Tap raw mic / TTS PCM via the `mic_chunk` / `tts_audio_chunk` events (api v3+) |
 | **Discord** | Extend the optional Discord selfbot via `ctx.discord.*` (api v2+) |
 | **State** | Persist their own data under `data/plugins/<name>/` |
 
@@ -75,7 +78,7 @@ Read that first.
 
 | Plugin | Type | What it does | Headline |
 |---|---|---|---|
-| [`diary/`](diary/) | Memory + Tools | A background sub-agent reads recent VRChat sessions every couple hours and writes first person diary entries the AI can read back later. | `readDiary`, `searchDiary` |
+| [`diary/`](diary/) | Memory + Tools | A background sub-agent reads recent VRChat sessions every couple hours and writes first person diary entries (now with one screenshot of the scene per entry), keeps his latest days in the system prompt, and lets the AI read older days back. | `readDiary`, `searchDiary` |
 | [`mood/`](mood/) | Prompt + Tool | Two-axis mood (emotion + 1-10 intensity) that survives restarts and is injected into every system prompt. | `setMood` |
 | [`duo_song/`](duo_song/) | Tools + Audio | Two Gabriel instances on the same LAN sing duets in sync, one half per machine. | `startDuoSong` |
 | [`midi_band/`](midi_band/) | Tools + Audio | A whole band of Gabriel instances plays a song together over LAN, either MIDI tracks via fluidsynth or uploaded audio stems, in sync. Standalone client included. | `startMidiBand` |
@@ -90,13 +93,16 @@ Read that first.
 
 ### [`diary/`](diary/) -- Long term first person diary
 
-![version](https://img.shields.io/badge/version-1.1.0-9333ea) ![api](https://img.shields.io/badge/api-v2-2ea44f) ![enabled](https://img.shields.io/badge/default-enabled-2ea44f) ![deps](https://img.shields.io/badge/deps-none-grey)
+![version](https://img.shields.io/badge/version-1.3.0-9333ea) ![api](https://img.shields.io/badge/api-v4-2ea44f) ![enabled](https://img.shields.io/badge/default-enabled-2ea44f) ![deps](https://img.shields.io/badge/deps-none-grey)
 
 A background sub-agent reads recent VRChat session transcripts every couple
 of hours and writes a first person diary entry to a custom `.diary` file.
 Gabriel gets tools to read his own diary back when he needs context the
 structured memory system would not capture (vibes, ongoing jokes, how
-people made him feel).
+people made him feel). His most recent entries are injected into the system
+prompt every build so he actually remembers recent days without being told to
+check, and one screenshot of what he's looking at gets grabbed at write time
+and handed to the diarizer for visual color.
 
 > [!IMPORTANT]
 > Requires `privacy.save_conversations: true` in the host config and
@@ -108,6 +114,7 @@ people made him feel).
 | **Model** | `gemini-3.1-flash-lite-preview` (configurable) |
 | **Schedule** | every 2 hours, after a 5 minute warmup |
 | **File** | `data/plugins/diary/gabriel.diary` (plain text, hand-editable) |
+| **Vision** | one screenshot of the current view per entry, sent to the diarizer (api v4, optional) |
 | **Tools** | `readDiary`, `searchDiary`, `listDiaryDates`, `updateDiaryNow` |
 
 ---
@@ -153,7 +160,7 @@ a small TCP handshake plus a fast ping/pong clock sync (typical drift under
 
 ### [`midi_band/`](midi_band/) -- Multi-instance MIDI + audio band
 
-![version](https://img.shields.io/badge/version-0.16.0-9333ea) ![api](https://img.shields.io/badge/api-v1-2ea44f) ![enabled](https://img.shields.io/badge/default-disabled-grey) ![deps](https://img.shields.io/badge/deps-fluidsynth%20%2B%20sounddevice-blue) ![extras](https://img.shields.io/badge/extras-standalone%20client-ff66c4)
+![version](https://img.shields.io/badge/version-0.17.0-9333ea) ![api](https://img.shields.io/badge/api-v1-2ea44f) ![enabled](https://img.shields.io/badge/default-disabled-grey) ![deps](https://img.shields.io/badge/deps-fluidsynth%20%2B%20sounddevice-blue) ![extras](https://img.shields.io/badge/extras-standalone%20client-ff66c4)
 
 Turns a group of Gabriel instances on the same LAN into a live band. Two
 modes: **MIDI band**, where the host loads a MIDI file and every bandmate
@@ -338,7 +345,7 @@ need `plugins.trusted: true`. See [Trust mode](#trust-mode-for-plugins-that-need
 You should see something like:
 
 ```
-[plugins] loaded plugin 'diary' v1.1.0
+[plugins] loaded plugin 'diary' v1.3.0
 ```
 
 in the log. If the plugin registers tools, they show up in

@@ -24,6 +24,33 @@ it needs context the structured memory system would not capture.
 ...
 ```
 
+## Recent days are always in his head
+
+Reading tools alone weren't enough, the AI rarely went and checked his diary
+unless you told him to, so he kept forgetting recent context. Now the plugin
+injects his **most recent entries straight into the system prompt** on every
+build (the same way the `mood` plugin injects mood). So his latest days are
+always in front of him without needing a tool call, and he references them
+naturally. The read tools are still there for digging into OLDER days. Their
+descriptions also now push him to search the diary before claiming he forgot a
+person or moment.
+
+This applies to both the VRChat session and the Discord bot's session.
+
+## A screenshot rides along with each entry
+
+When it's time to journal, the plugin grabs **one** screenshot of what Gabriel
+is looking at right then (`ctx.capture_vision_frame()`, host api v4) and hands
+it to the diarizer model alongside the transcripts. Just a single frame per
+entry, not a stream, so it's cheap. The diarizer actually writes about it,
+usually a present-tense "right now, as I write this..." bit near the end
+describing where he is, the world or room around him, who's nearby, and the
+vibe, while being told to treat it as his current view, not as proof of what
+happened earlier. The grab is lazy: it only fires once the plugin already
+knows it's going to write something, and it soft-fails to no image if capture
+isn't available, so a missing frame never blocks an entry. Set
+`attach_frame: false` to turn it off.
+
 ## Tools the AI can call
 
 | name | purpose |
@@ -45,6 +72,12 @@ plugins:
     initial_delay_seconds: 300 # warmup delay after startup before first tick
     filename: "gabriel.diary"  # name of the diary file under data/plugins/diary/
     conversation_dir: "data/conversations"  # where session transcripts live
+    inject_recent: true        # put his most recent entries in the system prompt every build
+    prompt_recent_entries: 2   # how many recent entries to inject
+    prompt_body_chars: 500     # max body chars per injected entry (keeps the prompt small)
+    attach_frame: true         # grab one screenshot at write time and send it to the diarizer (host api v4)
+    frame_max_size: null       # optional max image dimension, null uses the host vision default
+    frame_quality: null        # optional JPEG quality, null uses the host vision default
 ```
 
 ## File format

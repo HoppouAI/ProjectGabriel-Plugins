@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Awaitable, Callable, Optional
 
 from .diary import DiaryStore
 from .summarizer import DEFAULT_MODEL, write_next_entry
@@ -27,6 +27,7 @@ class DiaryScheduler:
         model: str = DEFAULT_MODEL,
         initial_delay_seconds: float = 300.0,
         get_persona: Optional[Callable[[], str]] = None,
+        capture_frame: Optional[Callable[[], Awaitable[Optional[bytes]]]] = None,
     ):
         self.store = store
         self.conv_dir = conv_dir
@@ -36,6 +37,7 @@ class DiaryScheduler:
         self.model = model
         self.initial_delay = max(0.0, float(initial_delay_seconds))
         self.get_persona = get_persona or (lambda: "")
+        self.capture_frame = capture_frame
         self._task: Optional[asyncio.Task] = None
         self._stop = False
 
@@ -84,6 +86,7 @@ class DiaryScheduler:
                 max_sessions=self.max_sessions,
                 model=self.model,
                 persona=persona,
+                capture_frame=self.capture_frame,
             )
         except Exception as e:
             logger.error(f"diary: tick failed: {e}")

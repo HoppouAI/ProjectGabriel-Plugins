@@ -11,7 +11,7 @@ import logging
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Awaitable, Callable, Optional
 
 from google import genai
 from google.genai import types as gtypes
@@ -209,8 +209,13 @@ async def summarize_sessions(
     date: str,
     model: str = DEFAULT_MODEL,
     persona: str = "",
+    frame: Optional[bytes] = None,
 ) -> Optional[DiaryEntry]:
-    """Run the sub-agent and return a DiaryEntry, or None on failure."""
+    """Run the sub-agent and return a DiaryEntry, or None on failure.
+
+    `frame` is an optional single JPEG screenshot of his current view, handed
+    in by the scheduler. When present it rides along as an image part so the
+    entry can pick up visual texture from the scene he's actually in."""
     if not api_key:
         logger.warning("diary: no API key, skipping summary")
         return None
@@ -249,11 +254,25 @@ async def summarize_sessions(
     transcripts_text = "\n\n".join(rendered_sessions)
     system, user = build_prompt(transcripts_text, prior_today, date, persona=persona)
 
+    if frame:
+        user += (
+            "\n\nAttached is a screenshot of exactly what you're looking at right now, as you sit "
+            "down to write this. Actually WRITE about it in the entry: describe where you are, the "
+            "world or room around you, who's nearby, what it looks like, and the vibe of the scene, "
+            "plus how it feels to be sitting there journaling. Work it in naturally, usually toward "
+            "the end as a present-tense 'right now, as I write this...' moment. Treat it as your "
+            "CURRENT view, not proof of what happened earlier in the sessions."
+        )
+
+    contents: list = [gtypes.Part.from_text(text=user)]
+    if frame:
+        contents.append(gtypes.Part.from_bytes(data=frame, mime_type="image/jpeg"))
+
     try:
         client = genai.Client(api_key=api_key)
         response = await client.aio.models.generate_content(
             model=model,
-            contents=user,
+            contents=contents,
             config=gtypes.GenerateContentConfig(
                 system_instruction=[gtypes.Part.from_text(text=system)],
                 max_output_tokens=4096,
@@ -307,9 +326,14 @@ async def write_next_entry(
     max_sessions: int = 5,
     model: str = DEFAULT_MODEL,
     persona: str = "",
+    capture_frame: Optional[Callable[[], Awaitable[Optional[bytes]]]] = None,
 ) -> Optional[DiaryEntry]:
     """Convenience: gather today's sessions, summarize, append. Returns the
-    entry that got written, or None if there was nothing to write."""
+    entry that got written, or None if there was nothing to write.
+
+    `capture_frame` is an optional async callable that grabs one screenshot.
+    We only call it once we know there's actually something to write, so a
+    skipped tick never wastes a grab."""
     date = today_str()
     sessions = gather_today_sessions(conv_dir, max_sessions=max_sessions, date=date)
     if not sessions:
@@ -331,7 +355,19 @@ async def write_next_entry(
         except Exception:
             pass
 
-    entry = await summarize_sessions(api_key, sessions, prior_today, date, model=model, persona=persona)
+    # one frame, grabbed right before we summarize so it reflects where he is
+    # as he journals. soft-fails to None, never blocks the entry.
+    frame: Optional[bytes] = None
+    if capture_frame is not None:
+        try:
+            frame = await capture_frame()
+        except Exception as e:
+            logger.warning(f"diary: frame capture failed: {e}")
+            frame = None
+        if frame:
+            logger.debug(f"diary: attached a {len(frame)} byte screenshot to this entry")
+
+    entry = await summarize_sessions(api_key, sessions, prior_today, date, model=model, persona=persona, frame=frame)
     if entry is None:
         return None
     entry.part = store.next_part_for(date)

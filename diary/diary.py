@@ -249,3 +249,51 @@ def friendly_date(iso_date: str) -> str:
     except Exception:
         return iso_date
     return d.strftime("%B %d, %Y").replace(" 0", " ")
+
+
+def _digest_entry(entry: DiaryEntry, body_chars: int) -> str:
+    """Compact one-block view of an entry for the prompt. Tighter than the
+    tool-response format, we only want the gist in the system prompt."""
+    head = f"[{friendly_date(entry.date)}]"
+    if entry.part > 1:
+        head += f" (part {entry.part})"
+    if entry.people:
+        head += f" with {', '.join(entry.people)}"
+    if entry.mood_arc:
+        head += f". mood: {entry.mood_arc}"
+    lines = [head]
+    body = (entry.body or "").strip()
+    if body:
+        if len(body) > body_chars:
+            body = body[:body_chars].rstrip() + "..."
+        lines.append(body)
+    if entry.highlights:
+        lines.append("highlights: " + "; ".join(entry.highlights))
+    return "\n".join(lines)
+
+
+def format_recent_for_prompt(store: "DiaryStore", max_entries: int = 2, body_chars: int = 500) -> Optional[str]:
+    """Render the most recent diary entries as a system prompt block so the
+    most recent days are always in front of the model. Returns None when the
+    diary is empty so we never inject an empty heading. Frame it as the AI's
+    own memory, never mention how the entries get written."""
+    entries = store.parse_all()
+    if not entries:
+        return None
+    entries.sort(key=lambda e: (e.date, e.part), reverse=True)
+    picked = entries[: max(1, max_entries)]
+    header = [
+        "**Fresh in your memory (your most recent diary):**",
+        "These are the latest things you wrote in your own diary, kept here so "
+        "your recent days are always in mind without you having to go look them "
+        "up. Talk about them naturally, like you remember living them.",
+        "",
+    ]
+    footer = [
+        "",
+        "If someone brings up a person, place, or moment you don't see above, "
+        "check your diary before saying you don't remember. Search it or read an "
+        "older day first instead of assuming you forgot.",
+    ]
+    blocks = "\n\n".join(_digest_entry(e, body_chars) for e in picked)
+    return "\n".join(header + [blocks] + footer)
