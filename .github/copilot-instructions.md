@@ -59,7 +59,9 @@ Optional:
 ```yaml
 name: my_thing            # MUST match folder name
 version: 0.1.0            # semver
-api_version: 2            # current host API version (2 adds ctx.discord)
+api_version: 4            # host API version you target. 2 added ctx.discord,
+                         # 3 added periodic tasks + mic/tts audio events,
+                         # 4 added local-backend STT + ctx.capture_vision_frame
 author: YourName
 description: one line description, shows up in logs and docs
 enabled: true             # set to false if it should ship in the off state
@@ -107,11 +109,12 @@ Inside `setup(ctx)` you get a `PluginContext`. Full reference:
 |---|---|
 | `ctx.register_tool(ToolClass)` | adds a Gemini function-calling tool |
 | `ctx.register_tts(name, factory)` | custom TTS provider, picked via `tts.external_provider` |
-| `ctx.register_stt(name, factory)` | custom STT provider |
+| `ctx.register_stt(name, factory)` | custom STT / ASR provider for the **local backend**, picked via `local.stt.external_provider` (api v4). The cloud backend transcribes in-model, so this only affects `backend: local`. |
 | `ctx.register_chatbox_source(name, source, priority=100)` | add a VRChat chatbox display |
 | `ctx.unregister_chatbox_source(name)` | remove one (rarely needed) |
 | `ctx.register_prompt_contributor(name, fn)` | inject text into the system prompt every build |
 | `ctx.unregister_prompt_contributor(name)` | remove one |
+| `ctx.register_periodic_task(name, interval_s, fn, run_immediately=False)` | run `fn` every N seconds on a host-managed daemon thread (api v3). use this instead of spinning your own thread. |
 | `ctx.subscribe(event, callback)` | hook a lifecycle event (sync or async) |
 | `ctx.discord` | sub-context for the Discord bot's separate gemini live session, see below |
 
@@ -121,6 +124,7 @@ Inside `setup(ctx)` you get a `PluginContext`. Full reference:
 |---|---|
 | `await ctx.send_system_instruction(text)` | push a mid-session system instruction to the model, same path the WebUI uses. wraps as `System instruction update - <text>` and waits for the model to stop speaking before injecting. session must be live. |
 | `await ctx.send_user_text(text)` | inject a user-style text turn into the live session. model responds like any other user message. session must be live. |
+| `await ctx.send_realtime_text(text)` | inject a SHORT annotation (speaker label, vision tag, sensor reading) into the CURRENT incoming user turn without ending it. does NOT wait for the model to stop speaking, so throttle it. api v3. |
 
 Both return `True` on success, `False` if the live session isn't up yet
 or sending failed. Don't call these inside `setup()` (no session yet),
@@ -151,6 +155,35 @@ The `audio / osc / session / tool_handler` references are `None` while
 `setup()` runs because the rest of the app is still spinning up. Read
 them lazily inside a tool handler, a startup event, or after the first
 `message_in` event.
+
+### Vision capture (api v4)
+
+`await ctx.capture_vision_frame(max_size=None, quality=None, monitor=None)`
+grabs a single screenshot of the screen the AI sees and returns it as raw
+JPEG bytes (`image/jpeg`), or `None` on failure. The blocking grab runs
+in a worker thread so it never stalls the event loop, which makes it safe
+to call as a background thing from a periodic task or an event handler.
+It captures the screen directly, so it works on both the cloud and local
+backends and does NOT need the session to be live.
+
+Defaults pull from the host `vision.*` config (monitor, max_size,
+quality). Feed the bytes to a model as an image part. Typical use is a
+background grab loop that keeps the best few frames per session and hands
+them to a sub-agent.
+
+```python
+from google.genai import types
+
+async def grab(self):
+    frame = await self.ctx.capture_vision_frame()   # JPEG bytes or None
+    if frame:
+        part = types.Part.from_bytes(data=frame, mime_type="image/jpeg")
+        # score / dedupe yourself, then hand `part` to your model call
+
+def setup(self, ctx):
+    self.ctx = ctx
+    ctx.register_periodic_task("grab", 3.0, self.grab)  # quiet background grabs
+```
 
 ## Tool classes
 
@@ -232,6 +265,8 @@ Built-in events the host fires:
 | `shutdown` | `()` | on graceful shutdown |
 | `message_in` | `(text: str, source: str)` | every transcribed user message |
 | `message_out` | `(text: str)` | every AI reply |
+| `mic_chunk` | `(data: bytes, sample_rate: int)` | raw int16 mono mic PCM, fires ~16x/sec (api v3, keep handlers cheap, just buffer) |
+| `tts_audio_chunk` | `(data: bytes, sample_rate: int)` | raw PCM about to be played out, post-fx (api v3, same throughput warning) |
 
 Subscribers can be sync or async. Exceptions in any handler are
 caught so one bad subscriber cannot break the rest.
