@@ -67,6 +67,14 @@ function buildDraft(
   return draft;
 }
 
+// split "gabriel (center)" into a base name + a position chip so cards
+// can show the full name without cramming everything on one line
+function splitName(name: string): { base: string; pos: string | null } {
+  const m = name.match(/^(.*?)\s*\(([^)]+)\)\s*$/);
+  if (m) return { base: m[1].trim() || name, pos: m[2].trim() };
+  return { base: name, pos: null };
+}
+
 function Chip({
   track,
   laneId,
@@ -130,6 +138,7 @@ function Lane({
   title,
   subtitle,
   badge,
+  host,
   tracks,
   inPool,
   onMenu,
@@ -141,6 +150,7 @@ function Lane({
   title: string;
   subtitle?: string;
   badge?: string;
+  host?: boolean;
   tracks: Track[];
   inPool: boolean;
   onMenu: (e: React.MouseEvent, idx: number) => void;
@@ -149,19 +159,31 @@ function Lane({
   shareCounts?: Map<number, number>;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: `lane:${id}` });
+  const { base, pos } = inPool ? { base: title, pos: null } : splitName(title);
+  const initial = (base.trim()[0] || "?").toUpperCase();
   return (
     <div
       ref={setNodeRef}
-      className={`lane${inPool ? " lane--pool" : ""}${isOver ? " lane--over" : ""}`}
+      className={`lane${inPool ? " lane--pool" : ""}${host ? " lane--host" : ""}${
+        isOver ? " lane--over" : ""
+      }`}
     >
       <div className="lane__head">
-        <div className="lane__title">
-          {badge && <span className="lane__badge">{badge}</span>}
-          <span>{title}</span>
+        {!inPool && (
+          <span className="lane__avatar" aria-hidden>
+            {initial}
+          </span>
+        )}
+        <div className="lane__id">
+          <div className="lane__title" title={title}>
+            <span className="lane__name">{base}</span>
+            {badge && <span className="lane__badge">{badge}</span>}
+          </div>
+          {pos && <span className="lane__pos">{pos}</span>}
+          {subtitle && <span className="lane__sub">{subtitle}</span>}
         </div>
         <span className="lane__count">{tracks.length}</span>
       </div>
-      {subtitle && <div className="lane__sub">{subtitle}</div>}
       <div className="lane__body">
         {tracks.length === 0 ? (
           <div className="lane__empty">{inPool ? "all tracks assigned" : "drop tracks here"}</div>
@@ -536,6 +558,7 @@ export function AssignBoard({
                 id={m}
                 title={m}
                 badge={m === hostName ? "HOST" : "MATE"}
+                host={m === hostName}
                 tracks={(draft[m] || []).map((i) => byIndex.get(i)).filter(Boolean) as Track[]}
                 inPool={false}
                 onMenu={(e, idx) => setMenu({ idx, x: e.clientX, y: e.clientY })}

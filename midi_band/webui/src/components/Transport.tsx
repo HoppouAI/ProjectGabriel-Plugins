@@ -7,6 +7,8 @@ import {
   faStop,
   faCheck,
   faVolumeHigh,
+  faVolumeLow,
+  faVolumeXmark,
   faTowerBroadcast,
 } from "@fortawesome/free-solid-svg-icons";
 import type { Status } from "../types";
@@ -134,103 +136,120 @@ export function Transport({ status, isHost, audioMode, onAction }: Props) {
   }
 
   const fam = familyFor(song || "");
+  const memberCount = status?.members?.length || 0;
+  const matesLabel = memberCount ? status?.members?.join(", ") : "nobody on stage yet";
+  const volPct = Math.min(100, (vol / 2) * 100);
+  const tonePct = Math.min(100, toneVol * 100);
+  const volIcon = vol <= 0.001 ? faVolumeXmark : vol < 0.85 ? faVolumeLow : faVolumeHigh;
 
   return (
-    <section className="transport panel">
-      <div className="transport__now">
-        <div className="transport__disc" style={{ ["--fam" as any]: fam.color }} data-spin={playing}>
-          <FontAwesomeIcon icon={faCompactDisc} />
-        </div>
-        <div className="transport__meta">
-          <div className="transport__song" title={song || ""}>
-            {songLabel || "no song loaded"}
-          </div>
-          <div className="transport__state">
-            <span className={`pill pill--${stateClass}`}>{state}</span>
-            <span className="transport__mates">
-              {(status?.members?.length || 0)} on stage
-              {status?.members?.length ? `: ${status.members.join(", ")}` : ""}
-            </span>
-          </div>
-        </div>
-      </div>
-
-      <div className="transport__bar">
-        <span className="transport__t">{fmtTime(pos)}</span>
-        <div className="scrub">
-          <div className="scrub__fill" style={{ width: `${pct}%` }} />
-          <div className="scrub__head" style={{ left: `${pct}%` }} />
-        </div>
-        <span className="transport__t">{fmtTime(dur)}</span>
-      </div>
-
-      <div className="transport__controls">
-        <div className="transport__buttons">
-          <button
-            className="tbtn tbtn--play"
-            disabled={!isHost || !!busy || (!song && !paused)}
-            onClick={onToggle}
-            title={toggleTitle}
+    <section className="controlbar">
+      <div className="cb__row">
+        <div className="cb-now">
+          <div
+            className="cb-now__disc"
+            style={{ ["--fam" as any]: fam.color }}
+            data-spin={playing}
           >
-            <FontAwesomeIcon icon={active ? faPause : faPlay} />
-          </button>
-          <button
-            className="tbtn tbtn--stop"
-            disabled={!isHost || !!busy || (!playing && !paused && !countIn)}
-            onClick={() => run("stop", api.stop)}
-            title="Stop"
-          >
-            <FontAwesomeIcon icon={faStop} />
-          </button>
-          {!audioMode && (
+            <FontAwesomeIcon icon={faCompactDisc} />
+          </div>
+          <div className="cb-now__meta">
+            <div className="cb-now__song" title={song || ""}>
+              {songLabel || "no song loaded"}
+            </div>
+            <div className="cb-now__line">
+              <span className={`pill pill--${stateClass}`}>{state}</span>
+              <span className="cb-now__time">
+                {fmtTime(pos)} / {fmtTime(dur)}
+              </span>
+              <span className="cb-now__mates" title={matesLabel}>
+                {memberCount} on stage
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <div className="cb-actions">
+          <div className="cb-transport">
             <button
-              className="tbtn tbtn--check"
-              disabled={!isHost || !!busy}
-              onClick={() => run("soundcheck", () => api.soundcheck(8, 120))}
-              title="Soundcheck (sync + warmup)"
+              className="tbtn tbtn--play"
+              disabled={!isHost || !!busy || (!song && !paused)}
+              onClick={onToggle}
+              title={toggleTitle}
             >
-              <FontAwesomeIcon icon={faCheck} /> check
+              <FontAwesomeIcon icon={active ? faPause : faPlay} />
             </button>
-          )}
-        </div>
+            <button
+              className="tbtn tbtn--stop"
+              disabled={!isHost || !!busy || (!playing && !paused && !countIn)}
+              onClick={() => run("stop", api.stop)}
+              title="Stop"
+            >
+              <FontAwesomeIcon icon={faStop} />
+            </button>
+            {!audioMode && (
+              <button
+                className="tbtn tbtn--check"
+                disabled={!isHost || !!busy}
+                onClick={() => run("soundcheck", () => api.soundcheck(8, 120))}
+                title="Soundcheck (sync + warmup)"
+              >
+                <FontAwesomeIcon icon={faCheck} />
+              </button>
+            )}
+          </div>
 
-        <div className="transport__vol">
-          <span className="transport__vol-icon" aria-hidden>
-            <FontAwesomeIcon icon={faVolumeHigh} />
-          </span>
-          <input
-            type="range"
-            min={0}
-            max={2}
-            step={0.05}
-            value={vol}
-            disabled={!isHost}
-            onChange={(e) => onVol(parseFloat(e.target.value))}
-          />
-          <span className="transport__vol-val">{vol.toFixed(2)}</span>
+          <div className="cb-vol" title="Band volume">
+            <span className="cb-vol__icon" aria-hidden>
+              <FontAwesomeIcon icon={volIcon} />
+            </span>
+            <input
+              className="slider"
+              type="range"
+              min={0}
+              max={2}
+              step={0.05}
+              value={vol}
+              disabled={!isHost}
+              style={{ ["--pct" as any]: `${volPct}%` }}
+              onChange={(e) => onVol(parseFloat(e.target.value))}
+            />
+            <span className="cb-vol__val">{vol.toFixed(2)}</span>
+          </div>
+
+          <div className={`cb-tone${toneOn ? " is-on" : ""}`}>
+            <button
+              className={`cb-tone__btn${toneOn ? " is-on" : ""}`}
+              disabled={!isHost}
+              onClick={onToneToggle}
+              title="Keep-warm sync tone: a soft hum every member plays so VRChat's voice gate stays open and the band stops drifting"
+            >
+              <FontAwesomeIcon icon={faTowerBroadcast} />
+              <span className="cb-tone__label">sync tone</span>
+            </button>
+            {toneOn && (
+              <div className="cb-tone__gain">
+                <input
+                  className="slider slider--tone"
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  value={toneVol}
+                  disabled={!isHost}
+                  style={{ ["--pct" as any]: `${tonePct}%` }}
+                  onChange={(e) => onToneVol(parseFloat(e.target.value))}
+                  title="Sync tone volume"
+                />
+                <span className="cb-tone__val">{Math.round(toneVol * 100)}%</span>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
-      <div className="transport__tone">
-        <button
-          className={`tbtn tbtn--tone${toneOn ? " is-on" : ""}`}
-          disabled={!isHost}
-          onClick={onToneToggle}
-          title="Keep-warm sync tone: a soft hum every member plays so VRChat's voice gate stays open and the band stops drifting"
-        >
-          <FontAwesomeIcon icon={faTowerBroadcast} /> sync tone {toneOn ? "on" : "off"}
-        </button>
-        <input
-          type="range"
-          min={0}
-          max={1}
-          step={0.01}
-          value={toneVol}
-          disabled={!isHost}
-          onChange={(e) => onToneVol(parseFloat(e.target.value))}
-          title="Sync tone volume"
-        />
-        <span className="transport__vol-val">{Math.round(toneVol * 100)}%</span>
+      <div className="cb-seek" title={`${fmtTime(pos)} / ${fmtTime(dur)}`}>
+        <div className="cb-seek__fill" style={{ width: `${pct}%` }} />
       </div>
     </section>
   );

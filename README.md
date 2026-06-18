@@ -160,7 +160,7 @@ a small TCP handshake plus a fast ping/pong clock sync (typical drift under
 
 ### [`midi_band/`](midi_band/) -- Multi-instance MIDI + audio band
 
-![version](https://img.shields.io/badge/version-0.20.0-9333ea) ![api](https://img.shields.io/badge/api-v1-2ea44f) ![enabled](https://img.shields.io/badge/default-disabled-grey) ![deps](https://img.shields.io/badge/deps-fluidsynth%20%2B%20sounddevice-blue) ![extras](https://img.shields.io/badge/extras-standalone%20client-ff66c4)
+![version](https://img.shields.io/badge/version-0.21.0-9333ea) ![api](https://img.shields.io/badge/api-v1-2ea44f) ![enabled](https://img.shields.io/badge/default-disabled-grey) ![deps](https://img.shields.io/badge/deps-fluidsynth%20%2B%20sounddevice-blue) ![extras](https://img.shields.io/badge/extras-standalone%20client-ff66c4)
 
 Turns a group of Gabriel instances on the same LAN into a live band. Two
 modes: **MIDI band**, where the host loads a MIDI file and every bandmate
