@@ -142,6 +142,15 @@ What you can do from it:
   Type 0 (single track) midis, which pack every instrument onto one
   track, are split out per channel so each instrument is its own
   assignable track instead of the whole song landing on one player.
+- **Read midi as** Auto / By track / By channel toggle above the assign
+  board. Most multitrack midis have one instrument per track, but some
+  put the instruments on the **channels** and use tracks as sections
+  instead, which makes every track read as "Drums" (channel 9 is in all
+  of them). Auto detects that and splits by channel on its own, but if a
+  file still reads wrong you can force By channel (or By track) here.
+  Switching re-reads the loaded song and clears assignments, since the
+  track numbers differ between the two layouts. Presets remember which
+  way their song was read.
 - Manually assign tracks to each bandmate by dragging chips between
   lanes, or hit Spread to round-robin the unassigned pool. Apply pushes
   the layout to the band. You can also hand the **same** track to several

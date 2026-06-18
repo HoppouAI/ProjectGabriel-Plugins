@@ -12,7 +12,7 @@ import {
 import type { DragEndEvent, DragStartEvent } from "@dnd-kit/core";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faEllipsis, faRightLeft, faCheck, faUsers } from "@fortawesome/free-solid-svg-icons";
-import type { Track, AssignmentMap, SfPreset, TrackProgram } from "../types";
+import type { Track, AssignmentMap, SfPreset, TrackProgram, ParseMode } from "../types";
 import { familyFor, presetName, buildInstrumentOptions } from "../instruments";
 import { api } from "../api";
 import { useToast } from "./Toasts";
@@ -43,6 +43,8 @@ interface Props {
   soundfont?: SfPreset[];
   currentSong?: string | null;
   audioMode?: boolean;
+  parseMode?: ParseMode;
+  resolvedParseMode?: "track" | "channel";
   disabled: boolean;
   resyncToken?: number;
   onApplied: () => void;
@@ -195,6 +197,8 @@ export function AssignBoard({
   soundfont,
   currentSong,
   audioMode,
+  parseMode,
+  resolvedParseMode,
   disabled,
   resyncToken,
   onApplied,
@@ -205,6 +209,7 @@ export function AssignBoard({
   const [activeIdx, setActiveIdx] = useState<number | null>(null);
   const [menu, setMenu] = useState<{ idx: number; x: number; y: number } | null>(null);
   const [applying, setApplying] = useState(false);
+  const [reparsing, setReparsing] = useState(false);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -391,6 +396,23 @@ export function AssignBoard({
     setDirty(false);
   }
 
+  // re-read the loaded midi by track vs by channel. resets assignments on
+  // the host, so the board resyncs from the server after.
+  async function changeParseMode(mode: ParseMode) {
+    if (mode === (parseMode || "auto")) return;
+    setReparsing(true);
+    try {
+      await api.setParseMode(mode);
+      setDirty(false);
+      toast.push(`reading midi by ${mode}`, "ok");
+      onApplied();
+    } catch (e: any) {
+      toast.push(`reparse failed: ${e.message}`, "err");
+    } finally {
+      setReparsing(false);
+    }
+  }
+
   function autoFill() {
     // round-robin the pool across every member, host included
     const pool = poolTracks.map((t) => t.index);
@@ -459,6 +481,34 @@ export function AssignBoard({
           </button>
         </div>
       </div>
+
+      {!audioMode && !!currentSong && (
+        <div className="parsemode">
+          <span className="parsemode__label">Read midi as</span>
+          {(["auto", "track", "channel"] as ParseMode[]).map((m) => (
+            <button
+              key={m}
+              type="button"
+              className={`parsemode__opt${(parseMode || "auto") === m ? " is-on" : ""}`}
+              onClick={() => changeParseMode(m)}
+              disabled={disabled || reparsing}
+              title={
+                m === "channel"
+                  ? "split by MIDI channel, fixes files that read as all Drums"
+                  : m === "track"
+                    ? "split by MIDI track, the usual layout"
+                    : "pick automatically per file"
+              }
+            >
+              {m === "auto"
+                ? `Auto${(parseMode || "auto") === "auto" && resolvedParseMode ? ` · ${resolvedParseMode}` : ""}`
+                : m === "track"
+                  ? "By track"
+                  : "By channel"}
+            </button>
+          ))}
+        </div>
+      )}
 
       {!playable.length ? (
         <div className="board__empty">load a song to see its tracks</div>

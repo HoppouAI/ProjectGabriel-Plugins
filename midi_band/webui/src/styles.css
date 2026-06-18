@@ -1081,6 +1081,46 @@ button {
   color: var(--orange);
   font-weight: 700;
 }
+
+/* parse-mode toggle: read a loaded midi by track vs by channel */
+.parsemode {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.parsemode__label {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin-right: 4px;
+}
+.parsemode__opt {
+  padding: 5px 10px;
+  border: 2px solid var(--line);
+  border-radius: 6px;
+  background: var(--navy-850);
+  color: var(--muted);
+  font-family: var(--font-display);
+  font-size: 11px;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  transition: background 0.14s ease, color 0.14s ease, border-color 0.14s ease;
+}
+.parsemode__opt:hover:not(.is-on):not(:disabled) {
+  color: var(--text);
+  border-color: var(--gold);
+}
+.parsemode__opt.is-on {
+  background: var(--gold);
+  border-color: var(--gold);
+  color: var(--navy-900);
+}
+.parsemode__opt:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
 .board__empty {
   padding: 40px 10px;
   text-align: center;

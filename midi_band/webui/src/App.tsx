@@ -197,6 +197,8 @@ export function App() {
               soundfont={soundfont}
               currentSong={currentSong}
               audioMode={audioMode}
+              parseMode={status?.parse_mode}
+              resolvedParseMode={status?.resolved_parse_mode}
               disabled={!isHost || !currentSong}
               resyncToken={resyncToken}
               onApplied={refreshStatus}

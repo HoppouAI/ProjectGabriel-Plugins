@@ -106,6 +106,11 @@ class BandServer:
         self._loaded_song: Optional[str] = None
         self._loaded_path: Optional[Path] = None
         self._loaded_info: Optional[dict] = None
+        # how the loaded file was read. requested is what the user asked for
+        # (auto/track/channel), resolved is the concrete mode parse_tracks
+        # actually used. clients and the host expand with the resolved one.
+        self._parse_mode: str = "auto"
+        self._resolved_parse_mode: str = "track"
         self._assignments: Dict[str, List[int]] = {}
         self._host_tracks: List[int] = []
         # per-track instrument overrides, {track_index: {bank, program}}.
@@ -209,6 +214,8 @@ class BandServer:
         self._loaded_song = None
         self._loaded_path = None
         self._loaded_info = None
+        self._parse_mode = "auto"
+        self._resolved_parse_mode = "track"
         self._assignments = {}
         self._host_tracks = []
         self._track_programs = {}
@@ -403,7 +410,8 @@ class BandServer:
             return {
                 "song": None, "tracks": [], "duration": 0.0,
                 "assignments": {}, "host_tracks": [], "track_programs": {},
-                "mode": self.mode,
+                "mode": self.mode, "parse_mode": self._parse_mode,
+                "resolved_parse_mode": self._resolved_parse_mode,
             }
         return {
             "song": self._loaded_song,
@@ -413,6 +421,8 @@ class BandServer:
             "host_tracks": list(self._host_tracks),
             "track_programs": {str(i): p for i, p in self._track_programs.items()},
             "mode": self.mode,
+            "parse_mode": self._parse_mode,
+            "resolved_parse_mode": self._resolved_parse_mode,
         }
 
     def list_soundfont_presets(self) -> list:
@@ -423,18 +433,23 @@ class BandServer:
         except Exception:
             return []
 
-    def load_song(self, query: str) -> dict:
+    def load_song(self, query: str, mode: Optional[str] = None) -> dict:
         path = midi_utils.find_midi(self.library_dir, query)
         if path is None:
             return {"result": "error", "message": f"no midi matching '{query}'"}
+        req_mode = (mode or "auto").lower()
+        if req_mode not in ("auto", "track", "channel"):
+            req_mode = "auto"
         try:
             data = path.read_bytes()
-            info = midi_utils.parse_tracks(data)
+            info = midi_utils.parse_tracks(data, req_mode)
         except Exception as e:
             return {"result": "error", "message": f"failed to parse midi: {e}"}
         self._loaded_song = path.name
         self._loaded_path = path
         self._loaded_info = info
+        self._parse_mode = req_mode
+        self._resolved_parse_mode = info.get("parse_mode", "track")
         # assignments dont survive a song change, force re-assignment
         self._assignments = {}
         self._host_tracks = []
@@ -445,11 +460,25 @@ class BandServer:
             "song": path.name,
             "duration": info["duration"],
             "tracks": info["tracks"],
+            "parse_mode": self._resolved_parse_mode,
             "instruction": (
                 "Now assign tracks to bandmates with assignBandTracks or call "
                 "autoAssignBandTracks for an automatic split, then call startMidiBand."
             ),
         }
+
+    def set_parse_mode(self, mode: str) -> dict:
+        """Re-read the loaded song with a forced parse mode (auto/track/
+        channel). Channel-organized files that read as all "Drums" by track
+        come apart properly by channel. Resets assignments since the virtual
+        track indices differ between modes."""
+        if not self._loaded_song:
+            return {"result": "error", "message": "no song loaded"}
+        m = (mode or "auto").lower()
+        if m not in ("auto", "track", "channel"):
+            return {"result": "error", "message": "mode must be auto, track or channel"}
+        return self.load_song(self._loaded_song, m)
+
 
     # ----- audio band mode -----
 
@@ -1014,6 +1043,7 @@ class BandServer:
             "name": clean,
             "mode": self.mode,
             "song": self._loaded_song,
+            "parse_mode": self._parse_mode,
             "host_tracks": list(self._host_tracks),
             "assignments": {k: list(v) for k, v in self._assignments.items()},
             "track_programs": {str(i): p for i, p in self._track_programs.items()},
@@ -1049,8 +1079,13 @@ class BandServer:
             sw = self.set_mode(pmode)
             if sw.get("result") != "ok":
                 return sw
-        # make sure the preset's song is the loaded one so indices line up
-        if song != self._loaded_song:
+        # make sure the preset's song is the loaded one, in the same parse
+        # mode, so the track indices line up
+        p_parse = pr.get("parse_mode", "auto")
+        need_reload = song != self._loaded_song
+        if pmode != P.MODE_AUDIO and p_parse != self._parse_mode:
+            need_reload = True
+        if need_reload:
             if pmode == P.MODE_AUDIO:
                 if self.audio_library is None or self.audio_library.song_info(song) is None:
                     return {"result": "error", "message": f"'{song}' is not in the audio library"}
@@ -1058,7 +1093,7 @@ class BandServer:
             else:
                 if not (self.library_dir / song).exists():
                     return {"result": "error", "message": f"'{song}' is not in the library"}
-                res = self.load_song(song)
+                res = self.load_song(song, p_parse)
             if res.get("result") != "ok":
                 return res
         # only hand out parts to bandmates who are actually here. anyone
@@ -1169,6 +1204,7 @@ class BandServer:
                     "tracks": tracks,
                     "track_names": track_names,
                     "track_programs": peer_programs,
+                    "parse_mode": self._resolved_parse_mode,
                     "duration": duration,
                     "count_in_beats": self.count_in_beats,
                     "count_in_bpm": self.count_in_bpm,
@@ -1211,7 +1247,7 @@ class BandServer:
         host_track_names = [track_info[i].get("display_label") or track_info[i]["name"] for i in host_tracks if 0 <= i < len(track_info)]
         if host_tracks:
             host_programs = {i: self._track_programs[i] for i in host_tracks if i in self._track_programs}
-            events = midi_utils.expand_track_events(file_bytes, host_tracks, host_programs)
+            events = midi_utils.expand_track_events(file_bytes, host_tracks, host_programs, self._resolved_parse_mode)
             events, count_in_lead = midi_utils.with_count_in(
                 events, self.count_in_beats, self.count_in_bpm
             )

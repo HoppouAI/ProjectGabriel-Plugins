@@ -73,6 +73,7 @@ class BandClient:
         self._pending_song_label: str = ""
         self._pending_track_names: List[str] = []
         self._pending_track_programs: dict = {}
+        self._pending_parse_mode: str = "auto"
         self._pending_duration: float = 0.0
         self._pending_count_in_beats: int = 0
         self._pending_count_in_bpm: float = 120.0
@@ -399,6 +400,7 @@ class BandClient:
         self._pending_song_label = str(msg.get("song_label") or "")
         self._pending_track_names = track_names
         self._pending_track_programs = dict(msg.get("track_programs") or {})
+        self._pending_parse_mode = str(msg.get("parse_mode") or "auto")
         self._pending_duration = duration
         self._pending_count_in_beats = int(msg.get("count_in_beats") or 0)
         self._pending_count_in_bpm = float(msg.get("count_in_bpm") or 120.0)
@@ -426,7 +428,8 @@ class BandClient:
         try:
             file_bytes = base64.b64decode(self._pending_file_b64 or "")
             events = midi_utils.expand_track_events(
-                file_bytes, self._pending_tracks, self._pending_track_programs
+                file_bytes, self._pending_tracks, self._pending_track_programs,
+                self._pending_parse_mode,
             )
             events, count_in_lead = midi_utils.with_count_in(
                 events,

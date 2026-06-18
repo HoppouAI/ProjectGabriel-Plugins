@@ -9,6 +9,7 @@ import type {
   AudioSongsResponse,
   ModeResponse,
   BandMode,
+  ParseMode,
 } from "./types";
 
 async function req<T>(path: string, opts: RequestInit = {}): Promise<T> {
@@ -139,6 +140,10 @@ export const api = {
   // give a midi a friendly display name, empty clears back to the filename
   renameSong: (name: string, display: string) =>
     postJson("/api/songs/rename", { name, display }),
+
+  // re-read the loaded midi by track vs by channel (auto/track/channel).
+  // use channel for files that read as all "Drums".
+  setParseMode: (mode: ParseMode) => postJson("/api/parse_mode", { mode }),
 
   // ----- audio band mode -----
   getMode: () => req<ModeResponse>("/api/mode"),

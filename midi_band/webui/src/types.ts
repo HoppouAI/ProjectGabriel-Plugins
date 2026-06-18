@@ -50,6 +50,11 @@ export interface SongsResponse {
 // midi mode plays soundfont tracks, audio mode plays uploaded stems
 export type BandMode = "midi" | "audio";
 
+// how a loaded midi is split into assignable tracks. auto picks per-track
+// vs per-channel, track forces per-track, channel forces per-channel (use
+// it for channel-organized files that read as all "Drums").
+export type ParseMode = "auto" | "track" | "channel";
+
 // one uploaded stem inside an audio song folder
 export interface AudioStem {
   index: number;
@@ -106,6 +111,10 @@ export interface Status {
   track_programs?: Record<string, TrackProgram | number>;
   // false when this host has no soundfont, so its synth is silent
   has_soundfont?: boolean;
+  // how the loaded midi was split. requested is what the user picked
+  // (auto/track/channel), resolved is what auto settled on (track/channel).
+  parse_mode?: ParseMode;
+  resolved_parse_mode?: "track" | "channel";
   // keep-warm sync tone: a soft continuous hum every member plays to hold
   // VRChat's voice gate open. on/off plus a 0..1 level.
   tone_on?: boolean;

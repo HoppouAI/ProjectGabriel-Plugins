@@ -212,14 +212,12 @@ def _ticks_to_seconds(target_tick: int, tpb: int, tempo_map: list) -> float:
     return seconds
 
 
-def _single_track_channels(mid) -> List[int]:
-    """Sorted channels that actually play notes in a single-track (type 0)
-    file. Shared by parse_tracks and expand_track_events so a virtual
-    track index maps to the same channel in both. Empty if no notes."""
-    if not mid.tracks:
-        return []
+def _note_channels(track) -> List[int]:
+    """Sorted channels that actually play notes in a flat message stream.
+    Shared by the per-channel parse and expand so a virtual track index
+    maps to the same channel in both. Empty if no notes."""
     chans = set()
-    for msg in mid.tracks[0]:
+    for msg in track or []:
         if msg.is_meta:
             continue
         if msg.type in ("note_on", "note_off") and hasattr(msg, "channel"):
@@ -227,19 +225,80 @@ def _single_track_channels(mid) -> List[int]:
     return sorted(chans)
 
 
-def _parse_single_track(mid, tpb, tempo_map) -> Optional[dict]:
-    """Type 0 files put every instrument in one track on separate channels.
-    Treat each channel as its own assignable track so the band can split
-    them, instead of dumping the whole song (often mislabeled "Drums"
-    because channel 9 is in the mix) onto one player."""
-    units = _single_track_channels(mid)
+def _merged_messages(mid):
+    """Flatten every track into one delta-timed stream. Lets the per-channel
+    parser treat channel-organized multitrack files (instruments live on the
+    channels, the tracks are just sections/segments) the same way it treats
+    a type-0 single-track file. For a single-track file this is just track 0."""
+    if not mid.tracks:
+        return []
+    if len(mid.tracks) == 1:
+        return mid.tracks[0]
+    import mido
+    try:
+        return mido.merge_tracks(mid.tracks)
+    except Exception:
+        out = []
+        for tr in mid.tracks:
+            out.extend(tr)
+        return out
+
+
+def _looks_channel_organized(mid) -> bool:
+    """True when instruments live on channels rather than tracks: several
+    note tracks pile onto the same channels (eg every section/segment track
+    writes drums on ch9 plus a few melody channels). Parsing such a file by
+    track mislabels everything (usually all "Drums"), parsing by channel
+    recovers the real instruments."""
+    note_tracks = 0
+    chan_track_count: dict = {}
+    for tr in mid.tracks:
+        chans = set()
+        for msg in tr:
+            if msg.is_meta:
+                continue
+            if msg.type == "note_on" and getattr(msg, "velocity", 0) > 0 \
+                    and hasattr(msg, "channel"):
+                chans.add(msg.channel)
+        if chans:
+            note_tracks += 1
+            for ch in chans:
+                chan_track_count[ch] = chan_track_count.get(ch, 0) + 1
+    distinct = len(chan_track_count)
+    if note_tracks <= 1 or distinct == 0:
+        return False
+    # one channel shared by lots of tracks AND way more tracks than channels
+    shared = any(c >= 3 for c in chan_track_count.values())
+    many = note_tracks >= distinct * 2
+    return shared and many
+
+
+def _resolve_parse_mode(mid, mode) -> str:
+    """Map the requested mode (auto/track/channel) to a concrete one.
+    parse_tracks and expand_track_events both call this so the virtual
+    track indices line up between the two passes."""
+    m = (mode or "auto").lower()
+    if m in ("track", "channel"):
+        return m
+    if len(mid.tracks) <= 1:
+        return "channel"
+    return "channel" if _looks_channel_organized(mid) else "track"
+
+
+def _parse_by_channel(track, tpb, tempo_map) -> Optional[dict]:
+    """Treat each MIDI channel as its own assignable track. Used for type-0
+    files and any channel-organized file where the instruments live on the
+    channels (the tracks are just sections), so the band can split them
+    instead of dumping the whole song (often mislabeled "Drums" because
+    channel 9 is in the mix) onto one player."""
+    units = _note_channels(track)
     if not units:
         return None
     prog_per_chan: dict = {}
     notes_per_chan = {ch: 0 for ch in units}
     last_tick_per_chan = {ch: 0 for ch in units}
     abs_tick = 0
-    for msg in mid.tracks[0]:
+    for msg in track:
         abs_tick += msg.time
         if msg.is_meta:
             continue
@@ -287,13 +346,13 @@ def _parse_single_track(mid, tpb, tempo_map) -> Optional[dict]:
     }
 
 
-def _expand_single_track(mid, tpb, tempo_map, track_indices, track_programs,
-                         note_kinds, setup_kinds) -> list:
-    """Per-channel event expansion for single-track (type 0) files.
+def _expand_by_channel(track, tpb, tempo_map, track_indices, track_programs,
+                       note_kinds, setup_kinds) -> list:
+    """Per-channel event expansion for type-0 and channel-organized files.
     track_indices are virtual positions into the same channel ordering
-    _parse_single_track used."""
+    _parse_by_channel used."""
     import mido
-    units = _single_track_channels(mid)
+    units = _note_channels(track)
     wanted_channels = set()
     for i in track_indices or []:
         try:
@@ -320,7 +379,7 @@ def _expand_single_track(mid, tpb, tempo_map, track_indices, track_programs,
 
     events = []
     abs_tick = 0
-    for msg in mid.tracks[0]:
+    for msg in track:
         abs_tick += msg.time
         if msg.is_meta:
             continue
@@ -353,24 +412,31 @@ def _expand_single_track(mid, tpb, tempo_map, track_indices, track_programs,
     return events
 
 
-def parse_tracks(file_bytes: bytes) -> dict:
+def parse_tracks(file_bytes: bytes, mode: str = "auto") -> dict:
     """Return summary info about every track in the file:
     {tracks: [{index, name, instrument, channels, note_count, duration}],
-     duration: float, ticks_per_beat: int}
+     duration: float, ticks_per_beat: int, parse_mode: str}
     Costs one full pass through the file, do it once on load.
+
+    mode: "auto" picks per-track vs per-channel by inspecting the file,
+    "track" forces the per-track read, "channel" forces the per-channel
+    read (use it for channel-organized files that read as all "Drums").
     """
     import mido
     mid = mido.MidiFile(file=io.BytesIO(file_bytes), clip=True)
     tpb = mid.ticks_per_beat
     tempo_map = _build_tempo_map(mid)
 
-    # type 0 (single track) files cram every instrument onto one track on
-    # separate channels. split them per channel so each can be assigned,
-    # otherwise the whole song lands on one player and reads as "Drums".
-    if len(mid.tracks) == 1:
-        split = _parse_single_track(mid, tpb, tempo_map)
+    # channel mode: every instrument lives on its own channel and the tracks
+    # are just sections. split per channel so each can be assigned, otherwise
+    # the whole song lands on one player and reads as "Drums". covers type-0
+    # singletrack files and channel-organized multitrack files.
+    if _resolve_parse_mode(mid, mode) == "channel":
+        split = _parse_by_channel(_merged_messages(mid), tpb, tempo_map)
         if split is not None:
+            split["parse_mode"] = "channel"
             return split
+        # nothing on any channel, fall back to the per-track read
 
     total_duration = 0.0
     tracks_info = []
@@ -443,11 +509,13 @@ def parse_tracks(file_bytes: bytes) -> dict:
         "tracks": tracks_info,
         "duration": round(total_duration, 2),
         "ticks_per_beat": tpb,
+        "parse_mode": "track",
     }
 
 
 def expand_track_events(file_bytes: bytes, track_indices: list,
-                        track_programs: Optional[dict] = None) -> list:
+                        track_programs: Optional[dict] = None,
+                        mode: str = "auto") -> list:
     """Return [(offset_seconds, mido.Message), ...] sorted by offset, for
     only the tracks in track_indices. Meta messages are dropped, only
     sounding events make it through.
@@ -470,12 +538,12 @@ def expand_track_events(file_bytes: bytes, track_indices: list,
     note_kinds = {"note_on", "note_off", "aftertouch", "polytouch"}
     setup_kinds = {"program_change", "control_change", "pitchwheel"}
 
-    # single-track (type 0) files: track_indices are per-channel virtual
-    # positions, mirror the split parse_tracks made.
-    if len(mid.tracks) == 1:
-        return _expand_single_track(
-            mid, tpb, tempo_map, track_indices, track_programs,
-            note_kinds, setup_kinds,
+    # channel mode: track_indices are per-channel virtual positions, mirror
+    # the split parse_tracks made. covers type-0 and channel-organized files.
+    if _resolve_parse_mode(mid, mode) == "channel":
+        return _expand_by_channel(
+            _merged_messages(mid), tpb, tempo_map, track_indices,
+            track_programs, note_kinds, setup_kinds,
         )
 
     wanted = set(int(i) for i in track_indices if i is not None)

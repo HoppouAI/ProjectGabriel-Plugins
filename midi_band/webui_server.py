@@ -153,6 +153,8 @@ class _Handler(BaseHTTPRequestHandler):
             return self._handle_assign()
         if path == "/api/songs/rename":
             return self._handle_song_rename()
+        if path == "/api/parse_mode":
+            return self._handle_parse_mode()
         if path == "/api/presets/save":
             return self._handle_preset_save()
         if path == "/api/presets/load":
@@ -375,6 +377,8 @@ class _Handler(BaseHTTPRequestHandler):
                 "count_in_remaining": ps.get("count_in_remaining"),
                 "members": [srv.instance_name] + srv.list_clients(),
                 "has_soundfont": ps.get("has_soundfont"),
+                "parse_mode": info.get("parse_mode"),
+                "resolved_parse_mode": info.get("resolved_parse_mode"),
             })
             try:
                 ts = srv.tone_status()
@@ -496,6 +500,16 @@ class _Handler(BaseHTTPRequestHandler):
             return self._json(400, {"result": "error", "message": "name required"})
         try:
             return self._json(200, srv.rename_song(name, display))
+        except Exception as e:
+            return self._json(500, {"result": "error", "message": str(e)})
+
+    def _handle_parse_mode(self):
+        srv = self._server_obj()
+        if srv is None:
+            return self._json(400, {"result": "error", "message": "host only"})
+        mode = str(self._read_json().get("mode") or "auto").strip()
+        try:
+            return self._json(200, srv.set_parse_mode(mode))
         except Exception as e:
             return self._json(500, {"result": "error", "message": str(e)})
 
