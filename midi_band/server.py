@@ -1254,6 +1254,15 @@ class BandServer:
             self.player.schedule(events, start_at, self._loaded_song,
                                  host_track_names, duration + count_in_lead,
                                  count_in_lead=count_in_lead)
+        else:
+            # host plays nothing this round, run a silent clock so the band's
+            # transport still shows on the webui (position ticks, stop works)
+            events, count_in_lead = midi_utils.silent_clock(
+                duration, self.count_in_beats, self.count_in_bpm
+            )
+            self.player.schedule(events, start_at, self._loaded_song, [],
+                                 duration + count_in_lead,
+                                 count_in_lead=count_in_lead)
         self.on_change()
         return {
             "result": "ok",

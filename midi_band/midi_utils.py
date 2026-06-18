@@ -694,3 +694,17 @@ def with_count_in(events: list, beats: int = 4, bpm: float = 120.0) -> tuple:
     out = click + shifted
     out.sort(key=lambda x: x[0])
     return out, lead
+
+
+def silent_clock(duration: float, beats: int = 4, bpm: float = 120.0) -> tuple:
+    """Events for a host that plays no tracks this round but still needs a
+    transport clock so the band's position/stop/pause show on the webui.
+    One inaudible event at the song end keeps the player thread alive for the
+    whole duration. Returns (events, lead_seconds), lead matching the count-in
+    the clients use so the host's clock lines up with theirs."""
+    import mido
+    _, lead = with_count_in([], beats, bpm)
+    end = lead + max(0.0, float(duration))
+    # all-notes-off on the percussion channel, nothing is sounding so it's mute
+    sentinel = mido.Message("control_change", channel=9, control=123, value=0)
+    return [(end, sentinel)], lead
