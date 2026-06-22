@@ -168,7 +168,7 @@ class OmniVoiceCppProvider:
         # from the HF repo into data_dir/models.
         self._model_repo = str(cfg("model_repo", "Serveurperso/OmniVoice-GGUF")
                                or "Serveurperso/OmniVoice-GGUF")
-        self._variant = str(cfg("model_variant", "Q8_0") or "Q8_0")
+        self._variant = str(cfg("model_variant", "Q4_K_M") or "Q4_K_M")
         self._base_model = cfg("base_model", None) or None
         self._codec_model = cfg("codec_model", None) or None
 
@@ -183,7 +183,7 @@ class OmniVoiceCppProvider:
         self._language = cfg("language", None) or ""
 
         # generation knobs -> MaskGIT sampler config
-        self._num_step = int(cfg("num_step", 16))
+        self._num_step = int(cfg("num_step", 8))
         self._guidance_scale = float(cfg("guidance_scale", 2.0))
         self._t_shift = float(cfg("t_shift", 0.1))
         self._layer_penalty_factor = float(cfg("layer_penalty_factor", 5.0))
@@ -376,10 +376,10 @@ class OmniVoiceCppProvider:
         variant = self._variant
         if variant not in _VALID_VARIANTS:
             logger.warning(
-                "omnivoice_cpp_tts: unknown model_variant %r, falling back to Q8_0 "
+                "omnivoice_cpp_tts: unknown model_variant %r, falling back to Q4_K_M "
                 "(valid: %s)", variant, ", ".join(_VALID_VARIANTS),
             )
-            variant = "Q8_0"
+            variant = "Q4_K_M"
 
         try:
             from huggingface_hub import hf_hub_download

@@ -26,11 +26,11 @@ lib_dir: null
 model_repo: "Serveurperso/OmniVoice-GGUF"
 
 # Which quantization to download. Options:
-#   Q8_0    recommended default, best quality/size balance
-#   Q4_K_M  lowest VRAM
+#   Q4_K_M  default, sounds great and lowest VRAM
+#   Q8_0    a touch more precise, bigger
 #   BF16    source faithful, max precision
 #   F32     reference / debug, large
-model_variant: "Q8_0"
+model_variant: "Q4_K_M"
 
 # Explicit local paths to the two GGUF files. If BOTH are set they win
 # over model_repo / model_variant and nothing is downloaded.
@@ -74,9 +74,11 @@ language: null
 
 # ── generation ────────────────────────────────────────────────────────
 
-# Diffusion (MaskGIT) update steps per sentence. 16 is the fast preset,
-# 32 is the quality preset. Lower = faster + lower latency.
-num_step: 16
+# Diffusion (MaskGIT) update steps per sentence. fewer = faster + lower
+# latency. gen time scales about linearly with this. on a 3060 with Q4_K_M:
+# 8 steps ~6-8x realtime, 16 ~3-4x, 32 ~2x. 8 is the default and sounds
+# good, bump to 12-16 if you want a bit more consistency on hard text.
+num_step: 8
 
 # Classifier free guidance scale. 2.0 is the upstream default.
 guidance_scale: 2.0

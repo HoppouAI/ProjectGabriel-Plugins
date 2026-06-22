@@ -74,7 +74,7 @@ class OmniVoiceCppTTSPlugin(Plugin):
             lib_dir=cfg("lib_dir", None) or None,
             model_repo=str(cfg("model_repo", "Serveurperso/OmniVoice-GGUF")
                            or "Serveurperso/OmniVoice-GGUF"),
-            model_variant=str(cfg("model_variant", "Q8_0") or "Q8_0"),
+            model_variant=str(cfg("model_variant", "Q4_K_M") or "Q4_K_M"),
             base_model=cfg("base_model", None) or None,
             codec_model=cfg("codec_model", None) or None,
             use_fa=bool(cfg("use_fa", True)),

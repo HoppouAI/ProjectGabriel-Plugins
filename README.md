@@ -85,7 +85,7 @@ Read that first.
 | [`midi_band/`](midi_band/) | Tools + Audio | A whole band of Gabriel instances plays a song together over LAN, either MIDI tracks via fluidsynth or uploaded audio stems, in sync. Standalone client included. | `startMidiBand` |
 | [`pocket_tts/`](pocket_tts/) | TTS Provider | Local CPU TTS via Kyutai Pocket TTS. Streaming, ~6x realtime, persistent voice cloning from a clip. | `tts.external_provider: pocket_tts` |
 | [`omnivoice_tts/`](omnivoice_tts/) | TTS Provider | GPU TTS via k2-fsa OmniVoice. 600+ languages, voice cloning, voice design (`female, british accent`), sentence-batched streaming with optional CUDA graph cache. | `tts.external_provider: omnivoice_tts` |
-| [`omnivoice_cpp_tts/`](omnivoice_cpp_tts/) | TTS Provider | Same OmniVoice model on the native [omnivoice.cpp](https://github.com/ServeurpersoCom/omnivoice.cpp) engine via ctypes (no torch). Quantized GGUF, lower VRAM, faster. Weights auto-download; you supply the native lib built for your GPU. | `tts.external_provider: omnivoice_cpp_tts` |
+| [`omnivoice_cpp_tts/`](omnivoice_cpp_tts/) | TTS Provider | Same OmniVoice model on the native [omnivoice.cpp](https://github.com/ServeurpersoCom/omnivoice.cpp) engine via ctypes (no torch). Quantized GGUF, lower VRAM, faster (8x realtime on a 3060). Weights auto-download; you supply the native lib built for your GPU. | `tts.external_provider: omnivoice_cpp_tts` |
 | [`voiceid/`](voiceid/) | Tools + Audio | Voice fingerprinting via Resemblyzer. The AI can save a voice under a name and identify whoever is currently speaking. Higher-accuracy ECAPA-TDNN variant lives on the [`voiceid-speechbrain`](https://github.com/HoppouAI/ProjectGabriel-Plugins/tree/voiceid-speechbrain) branch (not compatible with `omnivoice_tts`). | `saveVoice`, `identifyCurrentSpeaker` |
 | [`example_hello/`](example_hello/) | Reference | Minimal demo. Read this first when learning the plugin API. | `sayHello` |
 
@@ -242,7 +242,8 @@ lighter on VRAM and noticeably faster than the python plugin. Streams
 sentence by sentence through the same pipeline, supports voice design and
 voice cloning, and normalizes OmniVoice's nonverbal tags
 (`[laughter]`, `[sigh]`, ...). The GGUF weights auto-download from
-HuggingFace on first run. The one manual step is the native lib: build it
+HuggingFace on first run (`Q4_K_M` by default, sounds great and tiny). The
+one manual step is the native lib: build it
 for your GPU (CUDA per-arch, or Vulkan for any GPU) or drop in a prebuilt,
 then point `lib_dir` at the folder. See the
 [plugin README](omnivoice_cpp_tts/) for the full build guide.
@@ -252,7 +253,7 @@ then point `lib_dir` at the folder. See the
 | **Provider id** | `omnivoice_cpp_tts` (set `tts.external_provider: omnivoice_cpp_tts`) |
 | **Engine** | [omnivoice.cpp](https://github.com/ServeurpersoCom/omnivoice.cpp) via ctypes, C ABI `OV_ABI_VERSION 2` |
 | **Model** | [Serveurperso/OmniVoice-GGUF](https://huggingface.co/Serveurperso/OmniVoice-GGUF), base + tokenizer GGUF, auto-downloaded |
-| **Variants** | `Q8_0` (default), `Q4_K_M` (low VRAM), `BF16`, `F32` |
+| **Variants** | `Q4_K_M` (default, low VRAM), `Q8_0`, `BF16`, `F32` |
 | **Modes** | Voice cloning (`ref_audio` + `ref_text`, no ASR), voice design (`instruct`), or auto |
 | **Output** | 16-bit PCM mono, native 24 kHz, resampled to host rate if different |
 | **Native lib** | you build/supply it (`lib_dir` or `OMNIVOICE_CPP_DIR`). CUDA is per-arch, Vulkan runs on any GPU |

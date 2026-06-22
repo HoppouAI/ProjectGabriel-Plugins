@@ -14,7 +14,7 @@ your GPU.
 | | omnivoice_tts (python) | omnivoice_cpp_tts (this) |
 |---|---|---|
 | runtime | torch + diffusers | native omnivoice.cpp via ctypes |
-| weights | fp16/bf16 safetensors | quantized GGUF (Q8_0 default) |
+| weights | fp16/bf16 safetensors | quantized GGUF (Q4_K_M default) |
 | install | pip (heavy) | one native lib + auto GGUF download |
 | voice cloning | yes, auto transcribes with whisper | yes, but you must supply `ref_text` |
 | voice design | yes | yes |
@@ -43,7 +43,7 @@ tts:
 plugins:
   omnivoice_cpp_tts:
     lib_dir: "N:\\prebuilt\\omnivoice-cpp-cuda-win64\\bin"   # folder with omnivoice.dll
-    model_variant: "Q8_0"
+    model_variant: "Q4_K_M"
     instruct: "female, young adult, british accent"          # or clone below
 ```
 
@@ -52,8 +52,8 @@ plugins:
 You can also set the `OMNIVOICE_CPP_DIR` env var instead, or drop the dlls
 into a `native/` folder inside this plugin.
 
-First run downloads two GGUFs (about 650 MB + 290 MB for Q8_0) and warms the
-engine in the background. After that, starts are hot.
+First run downloads two GGUFs (about 410 MB + 250 MB for Q4_K_M) and warms
+the engine in the background. After that, starts are hot.
 
 ## Voice
 
@@ -199,14 +199,14 @@ The local file wins. Full annotated list lives in
 |---|---|---|
 | `lib_dir` | none | folder with `omnivoice.dll` + dlls. required |
 | `model_repo` | `Serveurperso/OmniVoice-GGUF` | HF repo to pull GGUFs from |
-| `model_variant` | `Q8_0` | `F32` / `BF16` / `Q8_0` / `Q4_K_M` |
+| `model_variant` | `Q4_K_M` | `F32` / `BF16` / `Q8_0` / `Q4_K_M` |
 | `base_model` / `codec_model` | none | local GGUF paths, skip the download |
 | `use_fa` | `true` | flash attention on a gpu backend |
 | `clamp_fp16` | `false` | guard fp16 matmul on sub-Ampere cuda |
 | `instruct` | none | voice design attribute string |
 | `ref_audio` / `ref_text` | none | voice cloning clip + transcript |
 | `language` | auto | `""` auto, `en`, `zh`, ... |
-| `num_step` | `16` | diffusion steps, 16 fast / 32 quality |
+| `num_step` | `8` | diffusion steps, fewer = faster (see perf) |
 | `guidance_scale` | `2.0` | classifier free guidance |
 | `seed` | `42` | rng seed |
 
@@ -220,6 +220,23 @@ numpy  stream2sentence  nltk  huggingface_hub  soundfile
 
 `soundfile` is only needed for voice cloning (reading the reference clip).
 Everything else is for sentence splitting and the model download.
+
+## Performance
+
+Generation time per sentence scales about linearly with `num_step`. Measured
+on an RTX 3060 (12 GB) with the `Q4_K_M` weights, voice design, `use_fa` on:
+
+| num_step | short sentence | medium sentence |
+|---|---|---|
+| 8 (default) | ~340 ms (6x realtime) | ~590 ms (8x realtime) |
+| 12 | ~505 ms (4x) | ~865 ms (6x) |
+| 16 | ~660 ms (3x) | ~1190 ms (4.5x) |
+| 24 | ~1005 ms (2x) | ~1810 ms (2.7x) |
+| 32 | ~1300 ms (1.5x) | ~2350 ms (2.2x) |
+
+Each sentence is generated in full then streamed, so that gen time is the
+per-sentence latency. 8 steps sounds good and keeps latency low. Bump it up
+if you want a bit more consistency on tricky text.
 
 ## Notes and limits
 
