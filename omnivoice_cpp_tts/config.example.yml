@@ -1,0 +1,122 @@
+# omnivoice.cpp TTS plugin local config. Optional, every key here can
+# also live in your main config.yml under plugins.omnivoice_cpp_tts.
+# Values in this file override values in config.yml.
+#
+# Copy this to plugins/omnivoice_cpp_tts/config.yml and tweak. The real
+# config.yml is gitignored.
+
+# ── native engine ─────────────────────────────────────────────────────
+
+# Path to the folder that holds omnivoice.dll plus its ggml and cuda
+# runtime dlls (the bin/ folder of an omnivoice.cpp build). REQUIRED.
+# If unset the plugin also checks the OMNIVOICE_CPP_DIR env var, then a
+# native/ folder inside the plugin directory.
+#
+# This native lib is GPU-architecture specific. A CUDA build only runs on
+# the gpu family it was compiled for. See the plugin README for how to
+# build it for your card.
+#   Example: "N:\\prebuilt\\omnivoice-cpp-cuda-win64\\bin"
+lib_dir: null
+
+# ── models ────────────────────────────────────────────────────────────
+
+# Two GGUFs load together: a base LM and a tokenizer/codec. By default the
+# plugin auto-downloads them from this HuggingFace repo into
+# data/plugins/omnivoice_cpp_tts/models/ on first run.
+model_repo: "Serveurperso/OmniVoice-GGUF"
+
+# Which quantization to download. Options:
+#   Q8_0    recommended default, best quality/size balance
+#   Q4_K_M  lowest VRAM
+#   BF16    source faithful, max precision
+#   F32     reference / debug, large
+model_variant: "Q8_0"
+
+# Explicit local paths to the two GGUF files. If BOTH are set they win
+# over model_repo / model_variant and nothing is downloaded.
+#   base_model:  the LM      (omnivoice-base-*.gguf)
+#   codec_model: the codec   (omnivoice-tokenizer-*.gguf)
+base_model: null
+codec_model: null
+
+# ── compute ───────────────────────────────────────────────────────────
+
+# Flash attention. Speeds up the LM on a gpu backend. Leave on for CUDA.
+use_fa: true
+
+# Guard fp16 matmul accumulation on sub-Ampere CUDA (Turing 20xx etc).
+# Leave off on Ampere and newer. Turn on if you see fp16 numeric glitches.
+clamp_fp16: false
+
+# ── voice ─────────────────────────────────────────────────────────────
+
+# Voice design: a comma separated attribute string. The model invents a
+# matching voice, no reference clip needed. Leave null for auto voice.
+#   Gender: male, female
+#   Age: child, teenager, young adult, middle-aged, elderly
+#   Pitch: very low pitch, low pitch, moderate pitch, high pitch, very high pitch
+#   Style: whisper
+#   Accent: american accent, british accent, australian accent, ...
+#   Example: "female, young adult, high pitch, british accent"
+instruct: null
+
+# Voice cloning: a reference clip plus its transcript. ref_text is REQUIRED
+# for cloning, the native engine has no speech recognition to auto
+# transcribe (unlike the python omnivoice_tts plugin). If ref_audio is set
+# but ref_text is missing, the plugin falls back to design / auto voice.
+# Supported clip formats depend on your soundfile build (wav and flac
+# always, mp3/ogg if your libsndfile has them). 3-10s of clean speech.
+ref_audio: null
+ref_text: null
+
+# Language hint. "" or null = auto. "en", "zh", etc.
+language: null
+
+# ── generation ────────────────────────────────────────────────────────
+
+# Diffusion (MaskGIT) update steps per sentence. 16 is the fast preset,
+# 32 is the quality preset. Lower = faster + lower latency.
+num_step: 16
+
+# Classifier free guidance scale. 2.0 is the upstream default.
+guidance_scale: 2.0
+
+# Time-step shift for the noise schedule. Leave at the default unless you
+# know what you're tuning.
+t_shift: 0.1
+
+# Penalty on the deeper RVQ codebook layers.
+layer_penalty_factor: 5.0
+
+# Randomness for mask-position selection. 0 = deterministic, higher = more
+# varied placement.
+position_temperature: 5.0
+
+# Randomness for token sampling. 0 = greedy, higher = more varied.
+class_temperature: 0.0
+
+# Random seed for reproducible output (paired with position_temperature 0).
+seed: 42
+
+# Prepend the denoise marker so cloned output cleans up a noisy reference.
+denoise: true
+
+# Preprocess the reference: trim silences and add punctuation to ref_text.
+preprocess_prompt: true
+
+# Skip past the first ~80ms of the first audio chunk so the receiver does
+# not stutter on a tiny initial frame. Samples at the model's 24000 Hz
+# native rate. Set 0 to disable.
+first_chunk_min_samples: 1920
+
+# ── nonverbal tags ────────────────────────────────────────────────────
+#
+# OmniVoice understands a small set of inline nonverbal tags. The plugin
+# keeps these (and folds obvious variants like [laughs] / [chuckle] into
+# the nearest one), and strips anything else the AI invents so it does not
+# get spelled out letter by letter. Nothing to configure, just so you know
+# what survives:
+#   [laughter]  [sigh]  [confirmation-en]
+#   [question-en] [question-ah] [question-oh] [question-ei] [question-yi]
+#   [surprise-ah] [surprise-oh] [surprise-wa] [surprise-yo]
+#   [dissatisfaction-hnn]

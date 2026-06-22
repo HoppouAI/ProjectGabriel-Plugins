@@ -1,0 +1,18 @@
+name: omnivoice_cpp_tts
+version: 0.1.0
+api_version: 2
+author: HoppouAI
+description: >-
+  GPU TTS provider backed by omnivoice.cpp, a C++/GGML port of OmniVoice
+  (k2-fsa). Loads the native engine in-process via ctypes (no torch, no
+  server), runs quantized GGUF weights, and streams audio sentence by
+  sentence. Supports voice design (attribute prompts) and voice cloning
+  from a reference clip. Models auto-download from HuggingFace; you only
+  point it at your built/prebuilt omnivoice.dll.
+enabled: true
+requirements:
+  - numpy>=1.24
+  - stream2sentence>=0.2
+  - nltk>=3.8
+  - huggingface_hub>=0.23
+  - soundfile>=0.12
