@@ -223,7 +223,7 @@ The local file wins. Full annotated list lives in
 | `language` | auto | `""` auto, `en`, `zh`, ... |
 | `num_step` | `8` | diffusion steps, fewer = faster (see perf) |
 | `guidance_scale` | `2.0` | classifier free guidance |
-| `seed` | `42` | rng seed |
+| `seed` | random | int pins output (reproducible), null = fresh seed each line |
 
 ## Requirements
 

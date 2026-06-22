@@ -105,8 +105,11 @@ position_temperature: 5.0
 # Randomness for token sampling. 0 = greedy, higher = more varied.
 class_temperature: 0.0
 
-# Random seed for reproducible output (paired with position_temperature 0).
-seed: 42
+# Generation seed. Leave null (default) for a fresh random seed on every
+# line, so repeated phrases don't come out identical every time (more varied,
+# more natural). Set an integer to pin it for reproducible output (most
+# useful with position_temperature 0).
+seed: null
 
 # Prepend the denoise marker so cloned output cleans up a noisy reference.
 denoise: true

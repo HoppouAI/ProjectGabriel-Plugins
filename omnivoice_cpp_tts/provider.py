@@ -33,6 +33,7 @@ import ctypes as C
 import logging
 import os
 import queue
+import random
 import re
 import shutil
 import threading
@@ -201,7 +202,13 @@ class OmniVoiceCppProvider:
         self._layer_penalty_factor = float(cfg("layer_penalty_factor", 5.0))
         self._position_temperature = float(cfg("position_temperature", 5.0))
         self._class_temperature = float(cfg("class_temperature", 0.0))
-        self._seed = int(cfg("seed", 42))
+        # int pins output (reproducible). null/random = fresh seed per line so
+        # repeated phrases dont come out identical every time.
+        _seed = cfg("seed", None)
+        if _seed in (None, "", "random", "auto", -1, "-1"):
+            self._seed = None
+        else:
+            self._seed = int(_seed)
         self._denoise = bool(cfg("denoise", True))
         self._preprocess_prompt = bool(cfg("preprocess_prompt", True))
 
@@ -737,7 +744,10 @@ class OmniVoiceCppProvider:
         params.mg_layer_penalty_factor = self._layer_penalty_factor
         params.mg_position_temperature = self._position_temperature
         params.mg_class_temperature = self._class_temperature
-        params.mg_seed = C.c_uint64(self._seed & 0xFFFFFFFFFFFFFFFF).value
+        if self._seed is None:
+            params.mg_seed = random.getrandbits(64)
+        else:
+            params.mg_seed = self._seed & 0xFFFFFFFFFFFFFFFF
         params.denoise = self._denoise
         params.preprocess_prompt = self._preprocess_prompt
         # we feed one sentence per call (stream2sentence already split the

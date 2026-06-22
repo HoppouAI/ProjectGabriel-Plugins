@@ -47,7 +47,7 @@ def _load_local_config() -> dict:
 
 class OmniVoiceCppTTSPlugin(Plugin):
     name = "omnivoice_cpp_tts"
-    version = "0.2.1"
+    version = "0.2.2"
     description = "OmniVoice TTS via native omnivoice.cpp (ctypes, GGUF, no torch)"
     author = "HoppouAI"
 
