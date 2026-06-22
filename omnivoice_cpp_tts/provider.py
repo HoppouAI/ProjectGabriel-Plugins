@@ -211,7 +211,9 @@ class OmniVoiceCppProvider:
 
         if data_dir is None:
             data_dir = Path(".") / "data" / "plugins" / "omnivoice_cpp_tts"
-        self._data_dir = Path(data_dir)
+        # absolute, so os.add_dll_directory (needs an abs path) is happy when we
+        # extract the native dlls under here
+        self._data_dir = Path(data_dir).resolve()
         self._models_dir = self._data_dir / "models"
 
         self._sample_rate = 24000  # OmniVoice native, refined after load
@@ -836,8 +838,8 @@ class OmniVoiceCppProvider:
         stub._instruct = None
         stub._ref_samples = None
         stub._sample_rate = 24000
-        stub._data_dir = Path(data_dir)
-        stub._models_dir = Path(data_dir) / "models"
+        stub._data_dir = Path(data_dir).resolve()
+        stub._models_dir = Path(data_dir).resolve() / "models"
         stub._lib = None
         stub._ctx = None
         stub._load_error = None

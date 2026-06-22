@@ -232,7 +232,7 @@ CUDA graph cache on the LLM forward, voice clone prompts cached to disk.
 
 ### [`omnivoice_cpp_tts/`](omnivoice_cpp_tts/) -- Native GPU TTS via omnivoice.cpp
 
-![version](https://img.shields.io/badge/version-0.2.0-9333ea) ![api](https://img.shields.io/badge/api-v2-2ea44f) ![enabled](https://img.shields.io/badge/default-enabled-2ea44f) ![engine](https://img.shields.io/badge/engine-omnivoice.cpp-orange) ![no torch](https://img.shields.io/badge/no-torch-2ea44f) ![cloning](https://img.shields.io/badge/voice%20cloning-yes-ff66c4) ![design](https://img.shields.io/badge/voice%20design-yes-blueviolet)
+![version](https://img.shields.io/badge/version-0.2.1-9333ea) ![api](https://img.shields.io/badge/api-v2-2ea44f) ![enabled](https://img.shields.io/badge/default-enabled-2ea44f) ![engine](https://img.shields.io/badge/engine-omnivoice.cpp-orange) ![no torch](https://img.shields.io/badge/no-torch-2ea44f) ![cloning](https://img.shields.io/badge/voice%20cloning-yes-ff66c4) ![design](https://img.shields.io/badge/voice%20design-yes-blueviolet)
 
 The fast sibling of `omnivoice_tts`. Same k2-fsa OmniVoice model, but the
 synthesis runs in the native [omnivoice.cpp](https://github.com/ServeurpersoCom/omnivoice.cpp)

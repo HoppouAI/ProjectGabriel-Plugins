@@ -167,7 +167,7 @@ def load_library(lib_dir: str | os.PathLike) -> C.CDLL:
     Windows we add it to the dll search path first so omnivoice.dll can
     resolve ggml-cuda.dll -> cublas* -> cudart at load time.
     """
-    d = Path(lib_dir).expanduser()
+    d = Path(lib_dir).expanduser().resolve()
     if not d.is_dir():
         raise FileNotFoundError(f"omnivoice lib_dir is not a directory: {d}")
     dll = d / _dll_name()
