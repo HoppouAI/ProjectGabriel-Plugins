@@ -47,7 +47,7 @@ def _load_local_config() -> dict:
 
 class OmniVoiceCppTTSPlugin(Plugin):
     name = "omnivoice_cpp_tts"
-    version = "0.1.0"
+    version = "0.2.0"
     description = "OmniVoice TTS via native omnivoice.cpp (ctypes, GGUF, no torch)"
     author = "HoppouAI"
 
@@ -72,6 +72,8 @@ class OmniVoiceCppTTSPlugin(Plugin):
 
         warm_kwargs = dict(
             lib_dir=cfg("lib_dir", None) or None,
+            lib_url=cfg("lib_url", None) or None,
+            auto_download_lib=bool(cfg("auto_download_lib", True)),
             model_repo=str(cfg("model_repo", "Serveurperso/OmniVoice-GGUF")
                            or "Serveurperso/OmniVoice-GGUF"),
             model_variant=str(cfg("model_variant", "Q4_K_M") or "Q4_K_M"),

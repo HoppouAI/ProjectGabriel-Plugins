@@ -34,6 +34,7 @@ import logging
 import os
 import queue
 import re
+import shutil
 import threading
 import time
 from pathlib import Path
@@ -128,6 +129,12 @@ _BASE_FILE = "omnivoice-base-{v}.gguf"
 _CODEC_FILE = "omnivoice-tokenizer-{v}.gguf"
 _VALID_VARIANTS = ("F32", "BF16", "Q8_0", "Q4_K_M")
 
+# hosted win64 vulkan prebuilt, pulled on first run if no lib is configured
+_DEFAULT_LIB_URL = (
+    "https://github.com/HoppouAI/ProjectGabriel-Plugin-Resources/raw/main/"
+    "omnivoice_cpp_tts/omnivoice-cpp-vulkan-win64.zip"
+)
+
 
 def _resample_linear(x: np.ndarray, sr_in: int, sr_out: int) -> np.ndarray:
     if sr_in == sr_out or x.size == 0:
@@ -149,6 +156,8 @@ class OmniVoiceCppProvider:
     _load_locks: dict = {}
     # one global log bridge install, guarded so we only wire it once
     _log_installed = False
+    # serialize the one-time native lib download across threads
+    _lib_download_lock = threading.Lock()
 
     def __init__(self, config, local_overrides: dict | None = None, data_dir: Path | None = None):
         self.config = config
@@ -163,6 +172,9 @@ class OmniVoiceCppProvider:
         self._lib_dir = (cfg("lib_dir", None)
                          or os.environ.get("OMNIVOICE_CPP_DIR")
                          or None)
+        # if no lib is found locally, pull this prebuilt zip (windows only)
+        self._lib_url = cfg("lib_url", None) or _DEFAULT_LIB_URL
+        self._auto_download_lib = bool(cfg("auto_download_lib", True))
 
         # model selection. explicit paths win, else auto-download a variant
         # from the HF repo into data_dir/models.
@@ -353,19 +365,52 @@ class OmniVoiceCppProvider:
     # -- engine + voice loader (runs once on start) -----------------------
 
     def _resolve_lib_dir(self) -> str:
+        dll = _ffi._dll_name()
         if self._lib_dir:
             return str(self._lib_dir)
-        # last resort: a native/ folder shipped next to the plugin
+        # bundled next to the plugin
         local = Path(__file__).parent / "native"
-        if (local / _ffi._dll_name()).is_file():
+        if (local / dll).is_file():
             return str(local)
+        # previously auto-downloaded into the plugin data dir
+        downloaded = self._data_dir / "native"
+        if (downloaded / dll).is_file():
+            return str(downloaded)
+        # auto-download the prebuilt. the hosted zip is win64, windows only.
+        if self._auto_download_lib and self._lib_url and os.name == "nt":
+            with OmniVoiceCppProvider._lib_download_lock:
+                if not (downloaded / dll).is_file():
+                    self._download_and_extract_lib(downloaded)
+            if (downloaded / dll).is_file():
+                return str(downloaded)
         raise FileNotFoundError(
-            "omnivoice_cpp_tts: no native engine found. set "
-            "plugins.omnivoice_cpp_tts.lib_dir to the folder holding "
-            "omnivoice.dll (and its ggml + cuda dlls), or set the "
-            "OMNIVOICE_CPP_DIR env var, or drop the dlls in the plugin's "
-            "native/ folder. see the plugin README."
+            "omnivoice_cpp_tts: no native engine found. on windows it normally "
+            "auto-downloads on first run. set plugins.omnivoice_cpp_tts.lib_dir to "
+            "the folder holding omnivoice.dll (and its ggml dlls), or set the "
+            "OMNIVOICE_CPP_DIR env var, or drop the dlls in the plugin's native/ "
+            "folder. see the plugin README."
         )
+
+    def _download_and_extract_lib(self, dest: Path):
+        import urllib.request
+        import zipfile
+        dest.mkdir(parents=True, exist_ok=True)
+        tmp = dest / "_download.zip"
+        logger.info(
+            "omnivoice_cpp_tts: downloading native engine from %s (one time) ...",
+            self._lib_url,
+        )
+        try:
+            with urllib.request.urlopen(self._lib_url, timeout=120) as r, open(tmp, "wb") as f:
+                shutil.copyfileobj(r, f)
+            with zipfile.ZipFile(tmp) as z:
+                z.extractall(dest)
+            logger.info("omnivoice_cpp_tts: native engine ready at %s", dest)
+        finally:
+            try:
+                tmp.unlink()
+            except Exception:
+                pass
 
     def _resolve_models(self) -> tuple[str, str]:
         """Return (base_gguf_path, codec_gguf_path), downloading from HF if
@@ -770,13 +815,16 @@ class OmniVoiceCppProvider:
 
     @classmethod
     def warmup(cls, *, lib_dir, model_repo, model_variant, base_model,
-               codec_model, use_fa, clamp_fp16, data_dir):
+               codec_model, use_fa, clamp_fp16, data_dir,
+               lib_url=None, auto_download_lib=True):
         """Load the native engine into the process-wide warm cache on a
         background thread so the first session starts hot. Voice is resolved
         per session, so only the engine (model) is warmed here."""
         stub = cls.__new__(cls)
         stub.config = None
         stub._lib_dir = lib_dir or os.environ.get("OMNIVOICE_CPP_DIR") or None
+        stub._lib_url = lib_url or _DEFAULT_LIB_URL
+        stub._auto_download_lib = auto_download_lib
         stub._model_repo = model_repo
         stub._variant = model_variant
         stub._base_model = base_model

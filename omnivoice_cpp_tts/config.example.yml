@@ -7,16 +7,24 @@
 
 # ── native engine ─────────────────────────────────────────────────────
 
-# Path to the folder that holds omnivoice.dll plus its ggml and cuda
-# runtime dlls (the bin/ folder of an omnivoice.cpp build). REQUIRED.
-# If unset the plugin also checks the OMNIVOICE_CPP_DIR env var, then a
-# native/ folder inside the plugin directory.
+# On Windows you can leave all of this alone. On first run the plugin
+# auto-downloads a prebuilt Vulkan engine (runs on any GPU) and unzips it
+# into data/plugins/omnivoice_cpp_tts/native/, so it just works.
 #
-# This native lib is GPU-architecture specific. A CUDA build only runs on
-# the gpu family it was compiled for. See the plugin README for how to
-# build it for your card.
+# Set lib_dir only if you want to point at your own build (eg a faster
+# CUDA build, or a non-Windows build). It's the folder that holds
+# omnivoice.dll plus its ggml dlls (the bin/ of an omnivoice.cpp build).
+# The plugin also honors the OMNIVOICE_CPP_DIR env var, and a native/
+# folder dropped next to the plugin.
 #   Example: "N:\\prebuilt\\omnivoice-cpp-cuda-win64\\bin"
 lib_dir: null
+
+# Where to fetch the prebuilt from when nothing is configured. Override to
+# host your own (eg a CUDA build). Windows only, the default zip is win64.
+lib_url: null
+
+# Turn off the auto-download (then you must provide lib_dir yourself).
+auto_download_lib: true
 
 # ── models ────────────────────────────────────────────────────────────
 

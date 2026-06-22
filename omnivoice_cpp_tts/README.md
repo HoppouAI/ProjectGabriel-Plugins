@@ -18,20 +18,23 @@ your GPU.
 | install | pip (heavy) | one native lib + auto GGUF download |
 | voice cloning | yes, auto transcribes with whisper | yes, but you must supply `ref_text` |
 | voice design | yes | yes |
-| setup effort | low | medium (build/grab the native lib once) |
+| setup effort | low | low on Windows (auto-downloads), manual build elsewhere |
 
 ## What you need
 
-1. The native **omnivoice.cpp shared library** built for your GPU. This is
-   the one manual step. Either build it (see below) or drop in a prebuilt
-   folder. It is a single architecture native lib, so a CUDA build only
-   runs on the GPU family it was compiled for.
-2. The **GGUF models**. These auto-download from
-   [Serveurperso/OmniVoice-GGUF](https://huggingface.co/Serveurperso/OmniVoice-GGUF)
-   on first run, into `data/plugins/omnivoice_cpp_tts/models/`. Nothing to
-   do here unless you want to point at local files.
+On **Windows: nothing**. On first run the plugin auto-downloads both pieces:
 
-Then it just works: set `lib_dir`, pick the provider, talk.
+1. The native **omnivoice.cpp engine**. A prebuilt Vulkan build (runs on any
+   GPU: NVIDIA / AMD / Intel) is pulled from
+   [ProjectGabriel-Plugin-Resources](https://github.com/HoppouAI/ProjectGabriel-Plugin-Resources)
+   and unzipped into `data/plugins/omnivoice_cpp_tts/native/`.
+2. The **GGUF models**, pulled from
+   [Serveurperso/OmniVoice-GGUF](https://huggingface.co/Serveurperso/OmniVoice-GGUF)
+   into `data/plugins/omnivoice_cpp_tts/models/`.
+
+So on Windows you just set the provider and talk. On Linux/macOS, or if you
+want a faster CUDA build, you build the native lib yourself (see below) and
+point `lib_dir` at it.
 
 ## Quick start
 
@@ -42,15 +45,25 @@ tts:
 
 plugins:
   omnivoice_cpp_tts:
-    lib_dir: "N:\\prebuilt\\omnivoice-cpp-cuda-win64\\bin"   # folder with omnivoice.dll
-    model_variant: "Q4_K_M"
-    instruct: "female, young adult, british accent"          # or clone below
+    instruct: "female, young adult, british accent"   # or clone, see Voice
 ```
 
-`lib_dir` is the only required key. Point it at the folder that holds
-`omnivoice.dll` together with its `ggml-*.dll` and the cuda runtime dlls.
-You can also set the `OMNIVOICE_CPP_DIR` env var instead, or drop the dlls
-into a `native/` folder inside this plugin.
+That's the whole config on Windows. The Vulkan engine and the models download
+themselves on first run.
+
+If you'd rather use your own build (eg CUDA for speed, or a non-Windows
+build), point it at the dll folder:
+
+```yaml
+plugins:
+  omnivoice_cpp_tts:
+    lib_dir: "N:\\prebuilt\\omnivoice-cpp-cuda-win64\\bin"   # folder with omnivoice.dll
+```
+
+`lib_dir` is the folder holding `omnivoice.dll` plus its `ggml-*.dll` (and
+any cuda runtime dlls). You can also set the `OMNIVOICE_CPP_DIR` env var, or
+drop the dlls into a `native/` folder inside this plugin. Set
+`auto_download_lib: false` to disable the download entirely.
 
 First run downloads two GGUFs (about 410 MB + 250 MB for Q4_K_M) and warms
 the engine in the background. After that, starts are hot.
@@ -197,7 +210,9 @@ The local file wins. Full annotated list lives in
 
 | key | default | what it does |
 |---|---|---|
-| `lib_dir` | none | folder with `omnivoice.dll` + dlls. required |
+| `lib_dir` | none | folder with `omnivoice.dll` + dlls. optional, auto-downloads on Windows |
+| `lib_url` | hosted Vulkan zip | where to fetch the prebuilt engine from |
+| `auto_download_lib` | `true` | pull the prebuilt engine when no `lib_dir` is found (Windows) |
 | `model_repo` | `Serveurperso/OmniVoice-GGUF` | HF repo to pull GGUFs from |
 | `model_variant` | `Q4_K_M` | `F32` / `BF16` / `Q8_0` / `Q4_K_M` |
 | `base_model` / `codec_model` | none | local GGUF paths, skip the download |
