@@ -1,0 +1,83 @@
+# breeze-tts-2.cpp plugin local config. Optional, every key here can also
+# live in your main config.yml under plugins.breeze_tts.
+# Values in this file override values in config.yml.
+#
+# Copy this to plugins/breeze_tts/config.yml and tweak. The real
+# config.yml is gitignored.
+
+# ── server ────────────────────────────────────────────────────────────
+
+# Where breeze-server is listening. The websocket port is read off
+# /health, so you normally only set the http one.
+host: "127.0.0.1"
+port: 8080
+
+# Force a websocket port instead of asking /health for it. Only needed if
+# you started the server with an explicit --ws-port.
+ws_port: null
+
+# ── launching the server yourself ─────────────────────────────────────
+
+# Leave this off and start breeze-server however you like, eg
+#   breeze-server.exe breeze-tts-2-q8_0.gguf --port 8080
+#
+# Turn it on and the plugin starts one for you if nothing answers on the
+# port, and stops it again on shutdown. Both exe and model are required.
+auto_start: false
+exe: null      # "N:\\prebuilt\\breeze-tts-2-cpp-vulkan-win64\\bin\\breeze-server.exe"
+model: null    # "N:\\prebuilt\\breeze-tts-2-cpp-vulkan-win64\\models\\breeze-tts-2-q8_0.gguf"
+
+# Extra flags appended to the launch command. host, port and the model are
+# already passed for you.
+extra_args: []
+#  - "--chunk-max"
+#  - "40"
+
+# ── voice ─────────────────────────────────────────────────────────────
+
+# A voice already on the server, either saved in its voices folder or
+# registered earlier. This is the cheapest option, it skips the reference
+# encode entirely (about 900ms down to about 280ms before first audio).
+voice_id: null
+
+# Or point at a clip and the plugin uploads it once at startup to make a
+# voice. ref_text is REQUIRED and must be the exact transcript of the clip,
+# the server has no speech recognition to work it out. 5 to 10s of clean
+# speech works well.
+ref_audio: null
+ref_text: null
+
+# Give the uploaded clip a name and the server writes it to its voices
+# folder as <name>.breeze, so it survives restarts and shows up in the CLI
+# and web UI too. Leave null and it stays an in-memory cached voice.
+voice_name: null
+
+# With no voice_id and no ref_audio you get voice design: the model invents
+# a voice to match this description. Keep the seed pinned or you get a
+# different person every session.
+#   Example: "A warm young woman with a slight rasp, unhurried."
+instruction: "Speak clearly and naturally."
+
+# ── generation ────────────────────────────────────────────────────────
+
+# Classifier free guidance. 1.0 disables it and is the best sounding
+# default. Raise it toward 2 or 3 only if you turn vocal_events on.
+cfg_scale: 1.0
+
+# Pin the voice. Matters most for voice design, where a fresh seed means a
+# fresh person.
+seed: 42
+
+# 0 on either of these keeps whatever the gguf was built with.
+temperature: 0
+top_k: 0
+
+# Gabriel writes stage directions like [laughs] or *sighs*. Off, those get
+# stripped so they are not read out letter by letter. On, they are passed
+# through as breeze vocal events, eg (laugh), (sigh), (nervous chuckle).
+# The vocabulary is free form so most descriptive tags work.
+#
+# These only fire at cfg_scale 2 to 3. At 1.0 the model reads straight past
+# them, and cfg that high costs some naturalness on ordinary speech, so
+# this is a real tradeoff rather than a free win.
+vocal_events: false

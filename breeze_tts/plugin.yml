@@ -1,0 +1,17 @@
+name: breeze_tts
+version: 0.1.0
+api_version: 2
+author: HoppouAI
+description: >-
+  Streaming TTS provider backed by Breeze-TTS-2.cpp, a C++/GGUF
+  implementation of Breeze TTS 2. Talks to the server over its websocket
+  API, so the server does the sentence splitting and Gabriel just pipes
+  his reply in as it arrives. Supports voice cloning from a clip, saved
+  voices, voice design from a text description, mid turn delivery
+  changes, and real barge in. Bilingual English and Mandarin, 24 kHz,
+  faster than realtime at Q8_0 on a 3060.
+enabled: true
+requirements:
+  - websockets>=12
+  - numpy>=1.24
+  - requests>=2.31

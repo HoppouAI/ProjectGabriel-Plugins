@@ -9,7 +9,7 @@ the real time VRChat AI from [Hoppou.AI](https://hoppou.ai/).**
 [![Discord](https://img.shields.io/badge/discord-join-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/ZNWTYTk4Vq)
 [![Website](https://img.shields.io/badge/site-hoppou.ai-ff66c4?style=for-the-badge)](https://hoppou.ai/)
 [![License](https://img.shields.io/badge/license-AGPL--3.0-d22128?style=for-the-badge)](https://github.com/HoppouAI/ProjectGabriel-Remastered/blob/main/LICENSE)
-[![Plugins](https://img.shields.io/badge/plugins-8-9333ea?style=for-the-badge)](#plugin-matrix)
+[![Plugins](https://img.shields.io/badge/plugins-9-9333ea?style=for-the-badge)](#plugin-matrix)
 [![API](https://img.shields.io/badge/api__version-2--4-2ea44f?style=for-the-badge)](#)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen?style=for-the-badge)](#contributing-a-plugin)
 
@@ -41,6 +41,7 @@ repo. Want yours featured here? Open a PR.
   - [`pocket_tts/`](#pocket_tts--local-cpu-tts-via-kyutai-pocket-tts)
   - [`omnivoice_tts/`](#omnivoice_tts--gpu-tts-via-k2-fsa-omnivoice)
   - [`omnivoice_cpp_tts/`](#omnivoice_cpp_tts--native-gpu-tts-via-omnivoicecpp)
+  - [`breeze_tts/`](#breeze_tts--bilingual-tts-via-breeze-tts-2cpp)
   - [`voiceid/`](#voiceid--voice-fingerprinting-and-recognition)
   - [`example_hello/`](#example_hello--reference-plugin)
 - [Installing plugins](#installing-plugins)
@@ -86,6 +87,7 @@ Read that first.
 | [`pocket_tts/`](pocket_tts/) | TTS Provider | Local CPU TTS via Kyutai Pocket TTS. Streaming, ~6x realtime, persistent voice cloning from a clip. | `tts.external_provider: pocket_tts` |
 | [`omnivoice_tts/`](omnivoice_tts/) | TTS Provider | GPU TTS via k2-fsa OmniVoice. 600+ languages, voice cloning, voice design (`female, british accent`), sentence-batched streaming with optional CUDA graph cache. | `tts.external_provider: omnivoice_tts` |
 | [`omnivoice_cpp_tts/`](omnivoice_cpp_tts/) | TTS Provider | Same OmniVoice model on the native [omnivoice.cpp](https://github.com/ServeurpersoCom/omnivoice.cpp) engine via ctypes (no torch). Quantized GGUF, lower VRAM, faster (8x realtime on a 3060). On Windows the engine **and** weights auto-download on first run (prebuilt Vulkan, runs on any GPU). | `tts.external_provider: omnivoice_cpp_tts` |
+| [`breeze_tts/`](breeze_tts/) | TTS Provider | Bilingual English and Mandarin TTS via [Breeze-TTS-2.cpp](https://github.com/HoppouAI/Breeze-TTS-2.cpp). Runs as a separate server, so the sentence splitting happens server side and Gabriel's reply streams straight in. Voice cloning, voice design, real barge in, and free form vocal events like `(sigh)`. | `tts.provider: breeze_tts` |
 | [`voiceid/`](voiceid/) | Tools + Audio | Voice fingerprinting via Resemblyzer. The AI can save a voice under a name and identify whoever is currently speaking. Higher-accuracy ECAPA-TDNN variant lives on the [`voiceid-speechbrain`](https://github.com/HoppouAI/ProjectGabriel-Plugins/tree/voiceid-speechbrain) branch (not compatible with `omnivoice_tts`). | `saveVoice`, `identifyCurrentSpeaker` |
 | [`example_hello/`](example_hello/) | Reference | Minimal demo. Read this first when learning the plugin API. | `sayHello` |
 
@@ -257,6 +259,37 @@ the native lib yourself and point `lib_dir` at it. See the
 | **Output** | 16-bit PCM mono, native 24 kHz, resampled to host rate if different |
 | **Native lib** | auto-downloads on Windows (prebuilt Vulkan, any GPU). Override with `lib_dir` / `OMNIVOICE_CPP_DIR` for your own CUDA or non-Windows build |
 | **Requires** | `numpy`, `stream2sentence`, `nltk`, `huggingface_hub`, `soundfile` (no torch) |
+
+---
+
+### [`breeze_tts/`](breeze_tts/) -- Bilingual TTS via Breeze-TTS-2.cpp
+
+![version](https://img.shields.io/badge/version-0.1.0-9333ea) ![api](https://img.shields.io/badge/api-v2-2ea44f) ![enabled](https://img.shields.io/badge/default-enabled-2ea44f) ![engine](https://img.shields.io/badge/engine-breeze--tts--2.cpp-orange) ![cloning](https://img.shields.io/badge/voice%20cloning-yes-ff66c4) ![design](https://img.shields.io/badge/voice%20design-yes-blueviolet) ![barge in](https://img.shields.io/badge/barge%20in-yes-2ea44f)
+
+Breeze TTS 2 running on [Breeze-TTS-2.cpp](https://github.com/HoppouAI/Breeze-TTS-2.cpp),
+a C++/GGUF implementation of [Breeze TTS 2](https://huggingface.co/BreezeBlue/Breeze-TTS-2).
+English and Mandarin, 24 kHz, about 1.2x realtime at Q8_0 on a 3060.
+
+The model sits in a separate `breeze-server` process and the plugin talks to
+it over that server's websocket API, so nothing heavy loads inside Gabriel.
+That server buffers text and drains it on sentence boundaries itself, which
+means this is the one TTS plugin with no local sentence splitter: Gabriel's
+reply is forwarded verbatim as it streams. Interrupting is the server's own
+`cancel`, so barge in stops part way through a sentence rather than after it.
+One socket is held for the whole run, so the reference clip is encoded once
+and every turn after the first starts in about half a second. Start the
+server yourself or let the plugin launch it with `auto_start`.
+
+| | |
+|---|---|
+| **Provider id** | `breeze_tts` (set `tts.provider: breeze_tts`) |
+| **Engine** | [Breeze-TTS-2.cpp](https://github.com/HoppouAI/Breeze-TTS-2.cpp) server over its websocket API |
+| **Model** | [HoppouAI/Breeze-TTS-2.cpp](https://huggingface.co/HoppouAI/Breeze-TTS-2.cpp), `q8_0` recommended |
+| **Modes** | Saved `voice_id`, cloning (`ref_audio` + `ref_text`), or voice design (`instruction`) |
+| **Vocal events** | `[laughs]` becomes `(laugh)` when `vocal_events` is on. Free form vocabulary, needs `cfg_scale` 2 to 3 |
+| **Output** | 16-bit PCM mono, native 24 kHz, resampled to host rate if different |
+| **Server** | run it yourself, or set `auto_start` with `exe` and `model` |
+| **Requires** | `websockets`, `numpy`, `requests` (all already host deps) |
 
 ---
 
