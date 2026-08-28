@@ -57,8 +57,8 @@ Letting the plugin run the server instead:
 plugins:
   breeze_tts:
     auto_start: true
-    exe: "N:\\prebuilt\\breeze-tts-2-cpp-vulkan-win64\\bin\\breeze-server.exe"
-    model: "N:\\prebuilt\\breeze-tts-2-cpp-vulkan-win64\\models\\breeze-tts-2-q8_0.gguf"
+    exe: "C:\\breeze-tts-2.cpp\\bin\\breeze-server.exe"
+    model: "C:\\breeze-tts-2.cpp\\models\\breeze-tts-2-q8_0.gguf"
     voice_id: "gabriel"
 ```
 
@@ -92,7 +92,7 @@ just use `voice_id`.
 ```yaml
 plugins:
   breeze_tts:
-    ref_audio: "D:\\voices\\gabriel.wav"
+    ref_audio: "C:\\voices\\gabriel.wav"
     ref_text: "So I was hanging out in the Mcdonald's world and this dude just came up and started throwing fries at me."
     voice_name: "gabriel"
 ```

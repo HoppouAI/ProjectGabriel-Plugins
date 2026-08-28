@@ -24,8 +24,8 @@ ws_port: null
 # Turn it on and the plugin starts one for you if nothing answers on the
 # port, and stops it again on shutdown. Both exe and model are required.
 auto_start: false
-exe: null      # "N:\\prebuilt\\breeze-tts-2-cpp-vulkan-win64\\bin\\breeze-server.exe"
-model: null    # "N:\\prebuilt\\breeze-tts-2-cpp-vulkan-win64\\models\\breeze-tts-2-q8_0.gguf"
+exe: null      # "C:\\breeze-tts-2.cpp\\bin\\breeze-server.exe"
+model: null    # "C:\\breeze-tts-2.cpp\\models\\breeze-tts-2-q8_0.gguf"
 
 # Extra flags appended to the launch command. host, port and the model are
 # already passed for you.
